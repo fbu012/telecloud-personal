@@ -14,18 +14,20 @@
     "d1:migrate:remote": "wrangler d1 execute telecloud_personal_db --remote --file=migrations/0001_init.sql"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
-    "vite": "latest",
     "react": "latest",
     "react-dom": "latest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
     "autoprefixer": "latest",
     "postcss": "latest",
-    "tailwindcss": "latest",
+    "tailwindcss": "^3.4.17",
     "typescript": "latest",
+    "vite": "latest",
     "wrangler": "latest"
   }
 }
