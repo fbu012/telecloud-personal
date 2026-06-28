@@ -1,10 +1,11 @@
-import { errorJson, getTelegramApiBase, type Env } from '../_common';
+import { errorJson, getTelegramApiBase, requireFolderUnlocked, type Env } from '../_common';
 
 interface FileRow {
   id: string;
   original_name: string;
   mime_type: string;
   telegram_file_id: string | null;
+  folder_id: string | null;
   size_bytes: number;
   status: string;
 }
@@ -28,12 +29,16 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   if (!id) return errorJson('Query `id` wajib diisi', 400);
 
   const file = await env.DB.prepare(
-    'SELECT id, original_name, mime_type, telegram_file_id, size_bytes, status FROM files WHERE id = ? LIMIT 1',
+    'SELECT id, folder_id, original_name, mime_type, telegram_file_id, size_bytes, status FROM files WHERE id = ? LIMIT 1',
   )
     .bind(id)
     .first<FileRow>();
 
   if (!file || file.status === 'trash') return errorJson('File tidak ditemukan', 404);
+
+  const locked = await requireFolderUnlocked(env, request, file.folder_id);
+  if (locked) return locked;
+
   if (!file.telegram_file_id) return errorJson('telegram_file_id tidak tersedia', 400);
 
   const apiBase = getTelegramApiBase(env);

@@ -46,12 +46,13 @@ export async function getSettings(): Promise<Settings> {
   return data;
 }
 
-export async function listFiles(params: { q?: string; type?: string; favorite?: boolean; folder_id?: string | null; useFolderFilter?: boolean } = {}): Promise<StoredFile[]> {
+export async function listFiles(params: { q?: string; type?: string; favorite?: boolean; folder_id?: string | null; useFolderFilter?: boolean; folder_token?: string | null } = {}): Promise<StoredFile[]> {
   const url = new URL('/api/files', window.location.origin);
   if (params.q) url.searchParams.set('q', params.q);
   if (params.type) url.searchParams.set('type', params.type);
   if (params.favorite) url.searchParams.set('favorite', 'true');
   if (params.useFolderFilter) url.searchParams.set('folder_id', params.folder_id || 'root');
+  if (params.folder_token) url.searchParams.set('folder_token', params.folder_token);
 
   const response = await fetch(url.toString(), { credentials: 'include' });
   const data = await parseJson<{ ok: true; files: StoredFile[] }>(response);
@@ -75,7 +76,7 @@ export async function createFolder(name: string, parent_id: string | null): Prom
   return data.folder;
 }
 
-export async function updateFolder(id: string, patch: Partial<Pick<FolderItem, 'name'>>): Promise<FolderItem> {
+export async function updateFolder(id: string, patch: Partial<Pick<FolderItem, 'name'>> & { secure_password?: string; remove_secure_password?: boolean }): Promise<FolderItem> {
   const response = await fetch(`/api/folders/item?id=${encodeURIComponent(id)}`, {
     method: 'PATCH',
     credentials: 'include',
@@ -94,13 +95,16 @@ export async function deleteFolder(id: string): Promise<void> {
   await parseJson(response);
 }
 
-export async function uploadFile(file: File, skipDuplicates = false, folderId: string | null = null): Promise<{ file?: StoredFile; skipped?: boolean; reason?: string }> {
+export async function uploadFile(file: File, skipDuplicates = false, folderId: string | null = null, folderToken: string | null = null): Promise<{ file?: StoredFile; skipped?: boolean; reason?: string }> {
   const form = new FormData();
   form.append('file', file, file.name);
   form.append('skip_duplicates', skipDuplicates ? 'true' : 'false');
   if (folderId) form.append('folder_id', folderId);
 
-  const response = await fetch('/api/files/upload', {
+  const uploadUrl = new URL('/api/files/upload', window.location.origin);
+  if (folderToken) uploadUrl.searchParams.set('folder_token', folderToken);
+
+  const response = await fetch(uploadUrl.toString(), {
     method: 'POST',
     credentials: 'include',
     body: form,
@@ -132,12 +136,33 @@ export async function deleteFile(id: string, hard = false): Promise<void> {
   await parseJson(response);
 }
 
-export function getDownloadUrl(id: string): string {
-  return `/api/files/download?id=${encodeURIComponent(id)}`;
+export function getDownloadUrl(id: string, folderToken?: string | null): string {
+  const token = folderToken || getActiveFolderToken();
+  return `/api/files/download?id=${encodeURIComponent(id)}${token ? `&folder_token=${encodeURIComponent(token)}` : ''}`;
 }
 
-export function getPreviewUrl(id: string): string {
-  return `/api/files/download?id=${encodeURIComponent(id)}&disposition=inline`;
+export function getPreviewUrl(id: string, folderToken?: string | null): string {
+  const token = folderToken || getActiveFolderToken();
+  return `/api/files/download?id=${encodeURIComponent(id)}&disposition=inline${token ? `&folder_token=${encodeURIComponent(token)}` : ''}`;
+}
+
+export async function unlockFolder(folderId: string, password: string): Promise<string> {
+  const response = await fetch('/api/folders/unlock', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ folder_id: folderId, password }),
+  });
+  const data = await parseJson<{ ok: true; token: string }>(response);
+  return data.token;
+}
+
+function getActiveFolderToken(): string | null {
+  try {
+    return window.sessionStorage.getItem('telecloud_active_folder_token');
+  } catch {
+    return null;
+  }
 }
 export async function bulkFileAction(
   action: 'move' | 'delete' | 'copy',

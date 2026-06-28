@@ -1,4 +1,4 @@
-import { errorJson, json, nowIso, sanitizeFileName, type Env } from '../_common';
+import { createFolderSalt, errorJson, hashFolderPassword, json, nowIso, sanitizeFileName, type Env } from '../_common';
 
 interface FolderRow {
   id: string;
@@ -6,6 +6,10 @@ interface FolderRow {
   parent_id: string | null;
   created_at: string;
   updated_at: string;
+  is_secure: number;
+  password_hash: string | null;
+  password_salt: string | null;
+  password_updated_at: string | null;
 }
 
 export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
@@ -15,7 +19,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   const existing = await env.DB.prepare('SELECT * FROM folders WHERE id = ? LIMIT 1').bind(id).first<FolderRow>();
   if (!existing) return errorJson('Folder tidak ditemukan', 404);
 
-  let body: { name?: string };
+  let body: { name?: string; secure_password?: string; remove_secure_password?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -24,9 +28,35 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
 
   const name = sanitizeFolderName(body.name || existing.name);
   const now = nowIso();
-  await env.DB.prepare('UPDATE folders SET name = ?, updated_at = ? WHERE id = ?').bind(name, now, id).run();
+
+  let isSecure = existing.is_secure;
+  let passwordHash = existing.password_hash;
+  let passwordSalt = existing.password_salt;
+  let passwordUpdatedAt = existing.password_updated_at;
+
+  if (typeof body.secure_password === 'string' && body.secure_password.trim().length > 0) {
+    if (body.secure_password.length < 4) return errorJson('Password folder minimal 4 karakter', 400);
+    passwordSalt = createFolderSalt();
+    passwordHash = await hashFolderPassword(body.secure_password, passwordSalt, env);
+    passwordUpdatedAt = now;
+    isSecure = 1;
+  }
+
+  if (body.remove_secure_password === true) {
+    passwordSalt = null;
+    passwordHash = null;
+    passwordUpdatedAt = null;
+    isSecure = 0;
+  }
+
+  await env.DB.prepare(
+    'UPDATE folders SET name = ?, is_secure = ?, password_hash = ?, password_salt = ?, password_updated_at = ?, updated_at = ? WHERE id = ?',
+  )
+    .bind(name, isSecure, passwordHash, passwordSalt, passwordUpdatedAt, now, id)
+    .run();
+
   const updated = await env.DB.prepare('SELECT * FROM folders WHERE id = ? LIMIT 1').bind(id).first<FolderRow>();
-  return json({ ok: true, folder: updated });
+  return json({ ok: true, folder: normalizeFolder(updated!) });
 };
 
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
@@ -49,4 +79,15 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 function sanitizeFolderName(name: string): string {
   const cleaned = sanitizeFileName(name).replace(/^\.+$/, '').trim().slice(0, 80);
   return cleaned || 'New folder';
+}
+
+function normalizeFolder(folder: FolderRow) {
+  return {
+    id: folder.id,
+    name: folder.name,
+    parent_id: folder.parent_id || null,
+    is_secure: Boolean(folder.is_secure),
+    created_at: folder.created_at,
+    updated_at: folder.updated_at,
+  };
 }

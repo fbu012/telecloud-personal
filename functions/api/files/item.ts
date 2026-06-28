@@ -1,4 +1,4 @@
-import { errorJson, getTelegramApiBase, json, logEvent, nowIso, sanitizeFileName, type Env } from '../_common';
+import { errorJson, getTelegramApiBase, json, logEvent, nowIso, requireFolderUnlocked, sanitizeFileName, type Env } from '../_common';
 
 interface FileRow {
   id: string;
@@ -29,6 +29,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const file = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
   if (!file) return errorJson('File tidak ditemukan', 404);
 
+  const locked = await requireFolderUnlocked(env, request, file.folder_id);
+  if (locked) return locked;
+
   return json({ ok: true, file: normalizeFile(file) });
 };
 
@@ -38,6 +41,9 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
 
   const existing = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
   if (!existing) return errorJson('File tidak ditemukan', 404);
+
+  const currentLocked = await requireFolderUnlocked(env, request, existing.folder_id);
+  if (currentLocked) return currentLocked;
 
   let body: { original_name?: string; is_favorite?: boolean; tags?: string[]; notes?: string | null; folder_id?: string | null };
   try {
@@ -55,6 +61,8 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   if (folderId) {
     const folder = await env.DB.prepare('SELECT id FROM folders WHERE id = ? LIMIT 1').bind(folderId).first<{ id: string }>();
     if (!folder) return errorJson('Folder tujuan tidak ditemukan', 404);
+    const targetLocked = await requireFolderUnlocked(env, request, folderId);
+    if (targetLocked) return targetLocked;
   }
 
   const updatedAt = nowIso();
@@ -77,6 +85,9 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 
   const file = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
   if (!file) return errorJson('File tidak ditemukan', 404);
+
+  const locked = await requireFolderUnlocked(env, request, file.folder_id);
+  if (locked) return locked;
 
   if (hard) {
     if (env.DELETE_TELEGRAM_ON_HARD_DELETE === 'true' && env.BOT_TOKEN) {

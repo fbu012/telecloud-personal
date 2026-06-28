@@ -6,6 +6,7 @@ export interface FolderItem {
   parent_id: string | null;
   created_at: string;
   updated_at: string;
+  is_secure?: boolean;
 }
 
 export interface StoredFile {

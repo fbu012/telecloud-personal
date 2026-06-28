@@ -1,4 +1,4 @@
-import { errorJson, json, logEvent, nowIso, sanitizeFileName, type Env } from '../_common';
+import { errorJson, json, logEvent, nowIso, requireFolderUnlocked, sanitizeFileName, type Env } from '../_common';
 
 interface FileRow {
   id: string;
@@ -40,12 +40,20 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if ((action === 'move' || action === 'copy') && folderId) {
     const folder = await env.DB.prepare('SELECT id FROM folders WHERE id = ? LIMIT 1').bind(folderId).first<{ id: string }>();
     if (!folder) return errorJson('Folder tujuan tidak ditemukan', 404);
+    const targetLocked = await requireFolderUnlocked(env, request, folderId);
+    if (targetLocked) return targetLocked;
   }
 
   const placeholders = ids.map(() => '?').join(',');
   const rows = await env.DB.prepare(`SELECT * FROM files WHERE id IN (${placeholders})`).bind(...ids).all<FileRow>();
   const files = rows.results || [];
   if (!files.length) return errorJson('Files not found', 404);
+
+  const sourceFolderIds = Array.from(new Set(files.map((file) => file.folder_id).filter(Boolean))) as string[];
+  for (const sourceFolderId of sourceFolderIds) {
+    const locked = await requireFolderUnlocked(env, request, sourceFolderId);
+    if (locked) return locked;
+  }
 
   if (action === 'delete') {
     const deletedAt = nowIso();

@@ -48,10 +48,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!isTargetType(body.target_type) || !body.target_id) return errorJson('target_type dan target_id wajib diisi', 400);
 
   const exists = body.target_type === 'file'
-    ? await env.DB.prepare('SELECT id FROM files WHERE id = ? AND status != ? LIMIT 1').bind(body.target_id, 'trash').first<{ id: string }>()
-    : await env.DB.prepare('SELECT id FROM folders WHERE id = ? LIMIT 1').bind(body.target_id).first<{ id: string }>();
+    ? await env.DB.prepare('SELECT id, folder_id FROM files WHERE id = ? AND status != ? LIMIT 1').bind(body.target_id, 'trash').first<{ id: string; folder_id: string | null }>()
+    : await env.DB.prepare('SELECT id, is_secure FROM folders WHERE id = ? LIMIT 1').bind(body.target_id).first<{ id: string; is_secure: number }>();
 
   if (!exists) return errorJson(body.target_type === 'file' ? 'File tidak ditemukan' : 'Folder tidak ditemukan', 404);
+
+  if (body.target_type === 'folder' && 'is_secure' in exists && exists.is_secure) {
+    return errorJson('Secure folder tidak bisa dibuat share link. Lepas password folder dulu jika ingin membagikan.', 403);
+  }
+
+  if (body.target_type === 'file' && 'folder_id' in exists && exists.folder_id) {
+    const parent = await env.DB.prepare('SELECT is_secure FROM folders WHERE id = ? LIMIT 1').bind(exists.folder_id).first<{ is_secure: number }>();
+    if (parent?.is_secure) return errorJson('File di secure folder tidak bisa dibuat share link.', 403);
+  }
 
   const token = await createToken();
   const now = nowIso();

@@ -150,3 +150,67 @@ export async function logEvent(env: Env, type: string, message: string, meta: Re
     // Avoid breaking user-facing requests because event logging failed.
   }
 }
+
+export interface FolderSecurityRow {
+  id: string;
+  is_secure: number;
+  password_hash: string | null;
+  password_salt: string | null;
+}
+
+export function getFolderUnlockTokenFromRequest(request: Request): string | null {
+  const url = new URL(request.url);
+  return request.headers.get('x-folder-unlock') || url.searchParams.get('folder_token');
+}
+
+export async function hashFolderPassword(password: string, salt: string, env: Env): Promise<string> {
+  const normalized = `${salt}:${password}:${env.SESSION_SECRET}`;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function createFolderSalt(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
+  return out;
+}
+
+export async function createFolderUnlockToken(env: Env, folderId: string): Promise<string> {
+  const ttl = 60 * 60 * 8;
+  const payload = base64UrlEncode(JSON.stringify({ folder_id: folderId, exp: Math.floor(Date.now() / 1000) + ttl }));
+  const signature = await hmac(payload, env.SESSION_SECRET);
+  return `${payload}.${signature}`;
+}
+
+export async function verifyFolderUnlockToken(env: Env, token: string | null, folderId: string): Promise<boolean> {
+  if (!token) return false;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return false;
+  const expected = await hmac(payload, env.SESSION_SECRET);
+  if (expected !== signature) return false;
+
+  try {
+    const parsed = JSON.parse(base64UrlDecode(payload)) as { folder_id?: string; exp?: number };
+    return parsed.folder_id === folderId && typeof parsed.exp === 'number' && parsed.exp > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+export async function requireFolderUnlocked(env: Env, request: Request, folderId: string | null | undefined): Promise<Response | null> {
+  if (!folderId) return null;
+
+  const folder = await env.DB.prepare('SELECT id, is_secure, password_hash, password_salt FROM folders WHERE id = ? LIMIT 1')
+    .bind(folderId)
+    .first<FolderSecurityRow>();
+
+  if (!folder || !folder.is_secure) return null;
+
+  const token = getFolderUnlockTokenFromRequest(request);
+  const ok = await verifyFolderUnlockToken(env, token, folderId);
+  if (ok) return null;
+
+  return errorJson('Folder terkunci. Masukkan password folder untuk membuka.', 423, { folder_id: folderId, secure_folder: true });
+}

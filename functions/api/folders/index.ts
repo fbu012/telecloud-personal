@@ -6,11 +6,15 @@ interface FolderRow {
   parent_id: string | null;
   created_at: string;
   updated_at: string;
+  is_secure: number;
+  password_hash?: string | null;
+  password_salt?: string | null;
+  password_updated_at?: string | null;
 }
 
 export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
   const result = await env.DB.prepare('SELECT * FROM folders ORDER BY name COLLATE NOCASE ASC').all<FolderRow>();
-  return json({ ok: true, folders: result.results || [] });
+  return json({ ok: true, folders: (result.results || []).map(normalizeFolder) });
 };
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
@@ -40,14 +44,25 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   const id = crypto.randomUUID();
   const now = nowIso();
-  await env.DB.prepare('INSERT INTO folders (id, name, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, name, parentId, now, now)
+  await env.DB.prepare('INSERT INTO folders (id, name, parent_id, is_secure, password_hash, password_salt, password_updated_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, name, parentId, 0, null, null, null, now, now)
     .run();
 
-  return json({ ok: true, folder: { id, name, parent_id: parentId, created_at: now, updated_at: now } });
+  return json({ ok: true, folder: { id, name, parent_id: parentId, is_secure: false, created_at: now, updated_at: now } });
 };
 
 function sanitizeFolderName(name: string): string {
   const cleaned = sanitizeFileName(name).replace(/^\.+$/, '').trim().slice(0, 80);
   return cleaned || 'New folder';
+}
+
+function normalizeFolder(folder: FolderRow) {
+  return {
+    id: folder.id,
+    name: folder.name,
+    parent_id: folder.parent_id || null,
+    is_secure: Boolean(folder.is_secure),
+    created_at: folder.created_at,
+    updated_at: folder.updated_at,
+  };
 }

@@ -20,6 +20,9 @@ import {
   HardDrive,
   Home,
   Image,
+  KeyRound,
+  Lock,
+
   LayoutGrid,
   Link2,
   List,
@@ -58,6 +61,7 @@ import {
   logout,
   revokeShareLink,
   updateFile,
+  unlockFolder,
   updateFolder,
   uploadFile,
 } from './lib/api';
@@ -218,6 +222,8 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<StoredFile | null>(null);
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  const [unlockTarget, setUnlockTarget] = useState<FolderItem | null>(null);
+  const [folderTokens, setFolderTokens] = useState<Record<string, string>>({});
   const [lightboxFileId, setLightboxFileId] = useState<string | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -234,13 +240,14 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     [folders, currentFolderId],
   );
   const breadcrumbs = useMemo(() => buildBreadcrumbs(folders, currentFolderId), [folders, currentFolderId]);
+  const currentFolderToken = currentFolderId ? folderTokens[currentFolderId] || null : null;
 
   const refresh = useCallback(async () => {
     setLoadingFiles(true);
     try {
       const useFolderFilter = view === 'drive';
       const [remoteFiles, remoteFolders, remoteSettings] = await Promise.all([
-        listFiles({ q: searchQuery, type: typeFilter, favorite: view === 'favorites', folder_id: currentFolderId, useFolderFilter }),
+        listFiles({ q: searchQuery, type: typeFilter, favorite: view === 'favorites', folder_id: currentFolderId, useFolderFilter, folder_token: currentFolderToken }),
         listFolders().catch(() => []),
         getSettings().catch(() => null),
       ]);
@@ -252,7 +259,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     } finally {
       setLoadingFiles(false);
     }
-  }, [currentFolderId, searchQuery, typeFilter, view]);
+  }, [currentFolderId, currentFolderToken, searchQuery, typeFilter, view]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => refresh(), 250);
@@ -295,7 +302,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   async function processOne(item: UploadItem) {
     setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'uploading', progress: 35, error: undefined } : q)));
     try {
-      const result = await uploadFile(item.file, false, item.folder_id || null);
+      const result = await uploadFile(item.file, false, item.folder_id || null, item.folder_id ? folderTokens[item.folder_id] || null : null);
       if (result.skipped) {
         setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'skipped', progress: 100 } : q)));
       } else if (result.file) {
@@ -354,6 +361,54 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     }
   }
 
+  function openFolder(folder: FolderItem) {
+    if (folder.is_secure && !folderTokens[folder.id]) {
+      setUnlockTarget(folder);
+      return;
+    }
+    if (folder.is_secure && folderTokens[folder.id]) {
+      try {
+        window.sessionStorage.setItem('telecloud_active_folder_token', folderTokens[folder.id]);
+      } catch {
+        // ignore storage errors
+      }
+    } else {
+      try {
+        window.sessionStorage.removeItem('telecloud_active_folder_token');
+      } catch {
+        // ignore storage errors
+      }
+    }
+    setCurrentFolderId(folder.id);
+  }
+
+  function openFolderById(folderId: string) {
+    const folder = folders.find((item) => item.id === folderId);
+    if (folder) openFolder(folder);
+    else setCurrentFolderId(folderId);
+  }
+
+  function backToRoot() {
+    try {
+      window.sessionStorage.removeItem('telecloud_active_folder_token');
+    } catch {
+      // ignore storage errors
+    }
+    setCurrentFolderId(null);
+  }
+
+  async function unlockAndOpenFolder(folder: FolderItem, password: string) {
+    const token = await unlockFolder(folder.id, password);
+    setFolderTokens((prev) => ({ ...prev, [folder.id]: token }));
+    try {
+      window.sessionStorage.setItem('telecloud_active_folder_token', token);
+    } catch {
+      // ignore storage errors
+    }
+    setCurrentFolderId(folder.id);
+    setUnlockTarget(null);
+  }
+
   async function renameFolder(folder: FolderItem) {
     const name = window.prompt('Rename folder', folder.name);
     if (!name?.trim() || name.trim() === folder.name) return;
@@ -375,6 +430,39 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
       setNotice(`Folder "${folder.name}" deleted`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Gagal menghapus folder');
+    }
+  }
+
+  async function setFolderPassword(folder: FolderItem) {
+    const password = window.prompt(folder.is_secure ? 'New folder password' : 'Set folder password');
+    if (!password) return;
+    try {
+      const updated = await updateFolder(folder.id, { secure_password: password });
+      setFolders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setFolderTokens((prev) => {
+        const copy = { ...prev };
+        delete copy[folder.id];
+        return copy;
+      });
+      setNotice(`Secure password updated for "${updated.name}"`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal set password folder');
+    }
+  }
+
+  async function removeFolderPassword(folder: FolderItem) {
+    if (!window.confirm(`Remove secure password from "${folder.name}"?`)) return;
+    try {
+      const updated = await updateFolder(folder.id, { remove_secure_password: true });
+      setFolders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setFolderTokens((prev) => {
+        const copy = { ...prev };
+        delete copy[folder.id];
+        return copy;
+      });
+      setNotice(`Secure password removed from "${updated.name}"`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal remove password folder');
     }
   }
 
@@ -509,11 +597,13 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onPickFiles={handlePickFiles}
                 onDropFiles={(droppedFiles) => addFiles(droppedFiles, currentFolderId)}
                 onCreateFolder={createFolderInCurrent}
-                onOpenFolder={(folderId) => setCurrentFolderId(folderId)}
-                onBackToRoot={() => setCurrentFolderId(null)}
+                onOpenFolder={openFolderById}
+                onBackToRoot={backToRoot}
                 onMoveFile={moveFileToFolder}
                 onRenameFolder={renameFolder}
                 onDeleteFolder={removeFolder}
+                onSetFolderPassword={setFolderPassword}
+                onRemoveFolderPassword={removeFolderPassword}
                 onDeleteFile={removeFile}
                 onFavorite={toggleFavorite}
                 onSelect={setSelected}
@@ -612,6 +702,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
       )}
 
       {shareTarget && <ShareLinkModal target={shareTarget} onClose={() => setShareTarget(null)} />}
+      {unlockTarget && <UnlockFolderModal folder={unlockTarget} onClose={() => setUnlockTarget(null)} onUnlock={unlockAndOpenFolder} />}
     </div>
   );
 }
@@ -828,6 +919,8 @@ function CorporateDriveView(props: {
   onMoveFile: (fileId: string, folderId: string | null) => void;
   onRenameFolder: (folder: FolderItem) => void;
   onDeleteFolder: (folder: FolderItem) => void;
+  onSetFolderPassword: (folder: FolderItem) => void;
+  onRemoveFolderPassword: (folder: FolderItem) => void;
   onDeleteFile: (file: StoredFile) => void;
   onFavorite: (file: StoredFile) => void;
   onSelect: (file: StoredFile) => void;
@@ -866,7 +959,7 @@ function CorporateDriveView(props: {
       <Toolbar layoutMode={props.layoutMode} sortMode={props.sortMode} typeFilter={props.typeFilter} onLayoutChange={props.onLayoutChange} onSortChange={props.onSortChange} onTypeFilterChange={props.onTypeFilterChange} />
 
       <div className="p-4">
-        <FolderSection folders={props.folders} onOpenFolder={props.onOpenFolder} onMoveFile={props.onMoveFile} onRenameFolder={props.onRenameFolder} onDeleteFolder={props.onDeleteFolder} onShareFolder={props.onShareFolder} draggingFileId={props.draggingFileId} />
+        <FolderSection folders={props.folders} onOpenFolder={props.onOpenFolder} onMoveFile={props.onMoveFile} onRenameFolder={props.onRenameFolder} onDeleteFolder={props.onDeleteFolder} onSetFolderPassword={props.onSetFolderPassword} onRemoveFolderPassword={props.onRemoveFolderPassword} onShareFolder={props.onShareFolder} draggingFileId={props.draggingFileId} />
         {props.loading ? <LoadingState /> : props.layoutMode === 'grid' ? (
           <GridFiles files={props.files} onSelect={props.onSelect} onPreview={props.onPreview} onShare={props.onShareFile} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
         ) : (
@@ -979,6 +1072,8 @@ function FolderSection({
   onMoveFile,
   onRenameFolder,
   onDeleteFolder,
+  onSetFolderPassword,
+  onRemoveFolderPassword,
   onShareFolder,
   draggingFileId,
 }: {
@@ -987,6 +1082,8 @@ function FolderSection({
   onMoveFile: (fileId: string, folderId: string | null) => void;
   onRenameFolder: (folder: FolderItem) => void;
   onDeleteFolder: (folder: FolderItem) => void;
+  onSetFolderPassword: (folder: FolderItem) => void;
+  onRemoveFolderPassword: (folder: FolderItem) => void;
   onShareFolder: (folder: FolderItem) => void;
   onDropFilesToFolder?: (files: File[], folderId: string) => void;
   draggingFileId: string | null;
@@ -1012,10 +1109,10 @@ function FolderSection({
             className="group relative flex items-center gap-3 rounded-lg border border-border bg-slate-50 p-3 text-left hover:border-primary hover:bg-blue-50/50"
           >
             <button onClick={() => onOpenFolder(folder.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-primary"><Folder className="h-5 w-5" /></span>
+              <span className={cx('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', folder.is_secure ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-primary')}>{folder.is_secure ? <Lock className="h-5 w-5" /> : <Folder className="h-5 w-5" />}</span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-slate-950">{folder.name}</span>
-                <span className="text-xs text-slate-500">Folder</span>
+                <span className="flex items-center gap-1 truncate text-sm font-semibold text-slate-950">{folder.name}{folder.is_secure && <Lock className="h-3.5 w-3.5 shrink-0 text-amber-600" />}</span>
+                <span className="text-xs text-slate-500">{folder.is_secure ? 'Secure folder' : 'Folder'}</span>
               </span>
             </button>
 
@@ -1049,10 +1146,33 @@ function FolderSection({
                     setOpenMenuId(null);
                     onShareFolder(folder);
                   }}
-                  className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                  disabled={folder.is_secure}
+                  className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
                 >
                   Share link
                 </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenMenuId(null);
+                    onSetFolderPassword(folder);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  {folder.is_secure ? 'Change password' : 'Set password'}
+                </button>
+                {folder.is_secure && (
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setOpenMenuId(null);
+                      onRemoveFolderPassword(folder);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    Remove password
+                  </button>
+                )}
                 <button
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1372,10 +1492,80 @@ function LightboxMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
+function UnlockFolderModal({
+  folder,
+  onClose,
+  onUnlock,
+}: {
+  folder: FolderItem;
+  onClose: () => void;
+  onUnlock: (folder: FolderItem, password: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await onUnlock(folder, password);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal membuka folder');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-3" onClick={onClose}>
+      <form onSubmit={submit} className="w-full max-w-md overflow-hidden rounded-lg border border-border bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><Lock className="h-5 w-5" /></div>
+            <div className="min-w-0">
+              <h3 className="truncate font-semibold text-slate-950">Secure folder</h3>
+              <p className="truncate text-sm text-slate-500">{folder.name}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950"><X className="h-5 w-5" /></button>
+        </div>
+
+        <div className="space-y-4 p-4">
+          <p className="text-sm leading-6 text-slate-600">Masukkan password folder untuk membuka isi folder ini.</p>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-medium text-slate-700">Folder password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary"
+              autoFocus
+            />
+          </label>
+
+          {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+            <button type="submit" disabled={loading || !password} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af] disabled:opacity-50">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              Unlock
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ShareLinkModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
   const targetType = target.type;
   const targetId = target.type === 'file' ? target.file.id : target.folder.id;
   const targetName = target.type === 'file' ? target.file.original_name : target.folder.name;
+  const targetIsSecure = target.type === 'folder' && Boolean(target.folder.is_secure);
   const [links, setLinks] = useState<ShareLink[]>([]);
   const [allowDownload, setAllowDownload] = useState(true);
   const [expiresInDays, setExpiresInDays] = useState('');
@@ -1495,7 +1685,7 @@ function ShareLinkModal({ target, onClose }: { target: ShareTarget; onClose: () 
           ) : (
             <div className="space-y-4">
               <div className="rounded-lg border border-border bg-slate-50 p-3 text-sm leading-6 text-slate-600">
-                Create a public link. Anyone with the link can open the shared page without logging into your admin dashboard.
+                {targetIsSecure ? 'Secure folders cannot be shared. Remove the folder password first if you really need a public link.' : 'Create a public link. Anyone with the link can open the shared page without logging into your admin dashboard.'}
               </div>
 
               <label className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm">
@@ -1516,7 +1706,7 @@ function ShareLinkModal({ target, onClose }: { target: ShareTarget; onClose: () 
                 </select>
               </label>
 
-              <button onClick={createLink} disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1e40af] disabled:opacity-50">
+              <button onClick={createLink} disabled={busy || targetIsSecure} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1e40af] disabled:opacity-50">
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
                 Create share link
               </button>

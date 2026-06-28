@@ -1,4 +1,4 @@
-import { json, type Env } from '../_common';
+import { json, requireFolderUnlocked, type Env } from '../_common';
 
 interface FileRow {
   id: string;
@@ -57,6 +57,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
   if (favorite) {
     where.push('is_favorite = 1');
+  }
+
+  if (includeFolderFilter && folderId && folderId !== 'root') {
+    const locked = await requireFolderUnlocked(env, request, folderId);
+    if (locked) return locked;
   }
 
   const result = await env.DB.prepare(

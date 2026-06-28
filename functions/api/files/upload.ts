@@ -7,6 +7,7 @@ import {
   sanitizeFileName,
   sha256Hex,
   json,
+  requireFolderUnlocked,
   type Env,
 } from '../_common';
 
@@ -56,6 +57,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (folderId) {
     const folder = await env.DB.prepare('SELECT id FROM folders WHERE id = ? LIMIT 1').bind(folderId).first<{ id: string }>();
     if (!folder) return errorJson('Folder tujuan tidak ditemukan', 404);
+    const locked = await requireFolderUnlocked(env, request, folderId);
+    if (locked) return locked;
   }
   const mimeType = incoming.type || 'application/octet-stream';
   const buffer = await incoming.arrayBuffer();
