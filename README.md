@@ -124,7 +124,3 @@ Ringkasnya:
 - Untuk bulk upload, frontend mengirim **1 file = 1 request**.
 - Untuk mode awal, file besar akan ditolak sebelum dikirim ke Telegram.
 - File lama tidak perlu dipindah saat nanti migrasi ke Local Bot API Server; database sudah menyimpan `chat_id`, `message_id`, `file_id`, dan metadata utama.
-
-## Panduan install lengkap
-
-Baca `INSTALL_CLOUDFLARE_TELEGRAM.md` untuk langkah detail dari nol: membuat bot Telegram, mengambil `BOT_TOKEN` dan `TELEGRAM_CHAT_ID`, membuat D1, mengisi `wrangler.toml`, deploy Cloudflare Pages, dan troubleshooting.
