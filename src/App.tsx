@@ -632,13 +632,13 @@ function TopHeader({
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-white/95 backdrop-blur">
       <div className="mx-auto max-w-[1500px] px-3 py-3 lg:px-6">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-3 lg:hidden">
           <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 lg:hidden">{appName}</p>
-            <h1 className="truncate text-lg font-semibold tracking-tight text-slate-950 lg:text-xl">{title}</h1>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{appName}</p>
+            <h1 className="truncate text-lg font-semibold tracking-tight text-slate-950">{title}</h1>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 lg:hidden">
+          <div className="flex shrink-0 items-center gap-2">
             {canCreateFolder && (
               <button onClick={onNewFolder} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50" aria-label="New Folder" title="New Folder">
                 <FolderPlus className="h-4 w-4" />
@@ -660,8 +660,12 @@ function TopHeader({
           </div>
         </div>
 
-        <div className="mt-3 flex flex-col gap-2 lg:flex-row lg:items-center xl:min-w-[720px]">
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2">
+        <div className="mt-3 flex flex-col gap-2 lg:mt-0 lg:flex-row lg:items-center lg:gap-3">
+          <div className="hidden min-w-[170px] max-w-[240px] shrink-0 lg:block">
+            <h1 className="truncate text-xl font-semibold tracking-tight text-slate-950">{title}</h1>
+          </div>
+
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2 lg:max-w-[540px]">
             <Search className="h-4 w-4 shrink-0 text-slate-500" />
             <input
               value={searchQuery}
@@ -670,7 +674,8 @@ function TopHeader({
               className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
             />
           </div>
-          <div className="hidden flex-wrap gap-2 lg:flex">
+
+          <div className="hidden flex-wrap gap-2 lg:flex lg:shrink-0">
             {canCreateFolder && (
               <button onClick={onNewFolder} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 <FolderPlus className="h-4 w-4" /> New Folder
