@@ -23,6 +23,7 @@ import {
   Loader2,
   LogOut,
   Music,
+  MoreVertical,
   RefreshCcw,
   Search,
   Settings as SettingsIcon,
@@ -39,6 +40,7 @@ import {
   bulkFileAction,
   createFolder,
   deleteFile,
+  deleteFolder,
   getDownloadUrl,
   getMe,
   getPreviewUrl,
@@ -48,6 +50,7 @@ import {
   login,
   logout,
   updateFile,
+  updateFolder,
   uploadFile,
 } from './lib/api';
 import { formatBytes, formatDate, getTypeGroup, typeLabel } from './lib/format';
@@ -335,6 +338,30 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     }
   }
 
+  async function renameFolder(folder: FolderItem) {
+    const name = window.prompt('Rename folder', folder.name);
+    if (!name?.trim() || name.trim() === folder.name) return;
+    try {
+      const updated = await updateFolder(folder.id, { name: name.trim() });
+      setFolders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setNotice(`Folder renamed to "${updated.name}"`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal rename folder');
+    }
+  }
+
+  async function removeFolder(folder: FolderItem) {
+    if (!window.confirm(`Delete empty folder "${folder.name}"?`)) return;
+    try {
+      await deleteFolder(folder.id);
+      setFolders((prev) => prev.filter((item) => item.id !== folder.id));
+      if (currentFolderId === folder.id) setCurrentFolderId(folder.parent_id || null);
+      setNotice(`Folder "${folder.name}" deleted`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menghapus folder');
+    }
+  }
+
   async function moveFileToFolder(fileId: string, folderId: string | null) {
     try {
       const updated = await updateFile(fileId, { folder_id: folderId });
@@ -469,9 +496,12 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onOpenFolder={(folderId) => setCurrentFolderId(folderId)}
                 onBackToRoot={() => setCurrentFolderId(null)}
                 onMoveFile={moveFileToFolder}
+                onRenameFolder={renameFolder}
+                onDeleteFolder={removeFolder}
                 onDeleteFile={removeFile}
                 onFavorite={toggleFavorite}
                 onSelect={setSelected}
+                onPreview={(file) => setLightboxFileId(file.id)}
                 allFolders={folders}
                 selectedIds={selectedIds}
                 selectedCount={selectedFiles.length}
@@ -522,7 +552,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
 
       <MobileBottomNav view={view} setView={setView} />
 
-      {lightboxFile && view === 'photos' && (
+      {lightboxFile && (
         <MediaLightbox
           files={mediaLightboxFiles}
           file={lightboxFile}
@@ -765,9 +795,12 @@ function CorporateDriveView(props: {
   onOpenFolder: (folderId: string) => void;
   onBackToRoot: () => void;
   onMoveFile: (fileId: string, folderId: string | null) => void;
+  onRenameFolder: (folder: FolderItem) => void;
+  onDeleteFolder: (folder: FolderItem) => void;
   onDeleteFile: (file: StoredFile) => void;
   onFavorite: (file: StoredFile) => void;
   onSelect: (file: StoredFile) => void;
+  onPreview?: (file: StoredFile) => void;
   selectedIds: string[];
   selectedCount: number;
   bulkTargetFolderId: string;
@@ -800,11 +833,11 @@ function CorporateDriveView(props: {
       <Toolbar layoutMode={props.layoutMode} sortMode={props.sortMode} typeFilter={props.typeFilter} onLayoutChange={props.onLayoutChange} onSortChange={props.onSortChange} onTypeFilterChange={props.onTypeFilterChange} />
 
       <div className="p-4">
-        <FolderSection folders={props.folders} onOpenFolder={props.onOpenFolder} onMoveFile={props.onMoveFile} draggingFileId={props.draggingFileId} />
+        <FolderSection folders={props.folders} onOpenFolder={props.onOpenFolder} onMoveFile={props.onMoveFile} onRenameFolder={props.onRenameFolder} onDeleteFolder={props.onDeleteFolder} draggingFileId={props.draggingFileId} />
         {props.loading ? <LoadingState /> : props.layoutMode === 'grid' ? (
-          <GridFiles files={props.files} onSelect={props.onSelect} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
+          <GridFiles files={props.files} onSelect={props.onSelect} onPreview={props.onPreview} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
         ) : (
-          <FilesTable files={props.files} folders={props.allFolders} onSelect={props.onSelect} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} selectedIds={props.selectedIds} selectedCount={props.selectedCount} bulkTargetFolderId={props.bulkTargetFolderId} bulkBusy={props.bulkBusy} onBulkTargetFolderChange={props.onBulkTargetFolderChange} onToggleSelected={props.onToggleSelected} onToggleSelectAll={props.onToggleSelectAll} onClearSelection={props.onClearSelection} onBulkDelete={props.onBulkDelete} onBulkMove={props.onBulkMove} onBulkCopy={props.onBulkCopy} />
+          <FilesTable files={props.files} folders={props.allFolders} onSelect={props.onSelect} onPreview={props.onPreview} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} selectedIds={props.selectedIds} selectedCount={props.selectedCount} bulkTargetFolderId={props.bulkTargetFolderId} bulkBusy={props.bulkBusy} onBulkTargetFolderChange={props.onBulkTargetFolderChange} onToggleSelected={props.onToggleSelected} onToggleSelectAll={props.onToggleSelectAll} onClearSelection={props.onClearSelection} onBulkDelete={props.onBulkDelete} onBulkMove={props.onBulkMove} onBulkCopy={props.onBulkCopy} />
         )}
       </div>
     </div>
@@ -882,9 +915,9 @@ function CorporateCollectionView({
       <Toolbar layoutMode={layoutMode} sortMode={sortMode} typeFilter={typeFilter} onLayoutChange={onLayoutChange} onSortChange={onSortChange} onTypeFilterChange={onTypeFilterChange} />
       <div className="p-4">
         {loading ? <LoadingState /> : layoutMode === 'grid' ? (
-          <GridFiles files={files} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
+          <GridFiles files={files} onSelect={openFile} onPreview={onPreview} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
         ) : (
-          <FilesTable files={files} folders={folders} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} selectedIds={selectedIds} selectedCount={selectedCount} bulkTargetFolderId={bulkTargetFolderId} bulkBusy={bulkBusy} onBulkTargetFolderChange={onBulkTargetFolderChange} onToggleSelected={onToggleSelected} onToggleSelectAll={onToggleSelectAll} onClearSelection={onClearSelection} onBulkDelete={onBulkDelete} onBulkMove={onBulkMove} onBulkCopy={onBulkCopy} />
+          <FilesTable files={files} folders={folders} onSelect={openFile} onPreview={onPreview} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} selectedIds={selectedIds} selectedCount={selectedCount} bulkTargetFolderId={bulkTargetFolderId} bulkBusy={bulkBusy} onBulkTargetFolderChange={onBulkTargetFolderChange} onToggleSelected={onToggleSelected} onToggleSelectAll={onToggleSelectAll} onClearSelection={onClearSelection} onBulkDelete={onBulkDelete} onBulkMove={onBulkMove} onBulkCopy={onBulkCopy} />
         )}
       </div>
     </div>
@@ -905,8 +938,26 @@ function Breadcrumbs({ breadcrumbs, onBackToRoot, onOpenFolder }: { breadcrumbs:
   );
 }
 
-function FolderSection({ folders, onOpenFolder, onMoveFile, draggingFileId }: { folders: FolderItem[]; onOpenFolder: (folderId: string) => void; onMoveFile: (fileId: string, folderId: string | null) => void; onDropFilesToFolder?: (files: File[], folderId: string) => void; draggingFileId: string | null }) {
+function FolderSection({
+  folders,
+  onOpenFolder,
+  onMoveFile,
+  onRenameFolder,
+  onDeleteFolder,
+  draggingFileId,
+}: {
+  folders: FolderItem[];
+  onOpenFolder: (folderId: string) => void;
+  onMoveFile: (fileId: string, folderId: string | null) => void;
+  onRenameFolder: (folder: FolderItem) => void;
+  onDeleteFolder: (folder: FolderItem) => void;
+  onDropFilesToFolder?: (files: File[], folderId: string) => void;
+  draggingFileId: string | null;
+}) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
   if (!folders.length) return null;
+
   return (
     <div className="mb-4">
       <div className="mb-2 flex items-center justify-between">
@@ -914,22 +965,70 @@ function FolderSection({ folders, onOpenFolder, onMoveFile, draggingFileId }: { 
       </div>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {folders.map((folder) => (
-          <button
+          <div
             key={folder.id}
-            onClick={() => onOpenFolder(folder.id)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault();
               if (draggingFileId) onMoveFile(draggingFileId, folder.id);
             }}
-            className="flex items-center gap-3 rounded-lg border border-border bg-slate-50 p-3 text-left hover:border-primary hover:bg-blue-50/50"
+            className="group relative flex items-center gap-3 rounded-lg border border-border bg-slate-50 p-3 text-left hover:border-primary hover:bg-blue-50/50"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-primary"><Folder className="h-5 w-5" /></span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold text-slate-950">{folder.name}</span>
-              <span className="text-xs text-slate-500">Folder</span>
-            </span>
-          </button>
+            <button onClick={() => onOpenFolder(folder.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-primary"><Folder className="h-5 w-5" /></span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-slate-950">{folder.name}</span>
+                <span className="text-xs text-slate-500">Folder</span>
+              </span>
+            </button>
+
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpenMenuId((value) => (value === folder.id ? null : folder.id));
+              }}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:text-slate-950"
+              aria-label={`Folder actions for ${folder.name}`}
+              title="Folder actions"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+
+            {openMenuId === folder.id && (
+              <div className="absolute right-2 top-12 z-20 w-40 overflow-hidden rounded-lg border border-border bg-white shadow-lg">
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenMenuId(null);
+                    onOpenFolder(folder.id);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Open
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenMenuId(null);
+                    onRenameFolder(folder);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Rename
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenMenuId(null);
+                    onDeleteFolder(folder);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                >
+                  Delete empty folder
+                </button>
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </div>
@@ -940,6 +1039,7 @@ function FilesTable({
   files,
   folders,
   onSelect,
+  onPreview,
   onDetails,
   onFavorite,
   onDelete,
@@ -959,6 +1059,7 @@ function FilesTable({
   files: StoredFile[];
   folders: FolderItem[];
   onSelect: (file: StoredFile) => void;
+  onPreview?: (file: StoredFile) => void;
   onDetails?: (file: StoredFile) => void;
   onFavorite: (file: StoredFile) => void;
   onDelete: (file: StoredFile) => void;
@@ -1043,13 +1144,19 @@ function FilesTable({
                     />
                   </td>
                   <td className="max-w-[420px] px-4 py-3">
-                    <button onClick={() => onSelect(file)} className="flex min-w-0 items-center gap-3 text-left">
-                      <FileThumb file={file} size="sm" />
-                      <span className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <button
+                        onClick={() => (isPreviewable(file) && onPreview ? onPreview(file) : onSelect(file))}
+                        className="shrink-0"
+                        title={isPreviewable(file) ? 'Preview' : 'Open details'}
+                      >
+                        <FileThumb file={file} size="sm" />
+                      </button>
+                      <button onClick={() => onSelect(file)} className="min-w-0 text-left">
                         <span className="block truncate font-medium text-slate-950">{file.original_name}</span>
                         <span className="block truncate text-xs text-slate-500 md:hidden">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</span>
-                      </span>
-                    </button>
+                      </button>
+                    </div>
                   </td>
                   <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{typeLabel(file.mime_type)}</td>
                   <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
@@ -1067,13 +1174,13 @@ function FilesTable({
   );
 }
 
-function GridFiles({ files, onSelect, onDetails, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
+function GridFiles({ files, onSelect, onPreview, onDetails, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onPreview?: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
   if (!files.length) return <EmptyState />;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
       {files.map((file) => (
         <div key={file.id} draggable onDragStart={() => setDraggingFileId(file.id)} onDragEnd={() => setDraggingFileId(null)} className="overflow-hidden rounded-lg border border-border bg-white hover:border-primary">
-          <button onClick={() => onSelect(file)} className="flex aspect-video w-full items-center justify-center border-b border-border bg-slate-50">
+          <button onClick={() => (isPreviewable(file) && onPreview ? onPreview(file) : onSelect(file))} className="flex aspect-video w-full items-center justify-center border-b border-border bg-slate-50">
             <FileThumb file={file} size="lg" />
           </button>
           <div className="p-3">
@@ -1226,6 +1333,11 @@ function RowActions({ file, onDetails, onFavorite, onDelete, compact = false }: 
       {!compact && <button onClick={() => onDelete(file)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-4 w-4" /></button>}
     </div>
   );
+}
+
+function isPreviewable(file: StoredFile) {
+  const group = getTypeGroup(file.mime_type);
+  return group === 'image' || group === 'video';
 }
 
 function FileThumb({ file, size }: { file: StoredFile; size: 'sm' | 'lg' }) {
