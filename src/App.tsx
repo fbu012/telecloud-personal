@@ -1444,7 +1444,7 @@ function MediaLightbox({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/45 p-3 text-slate-950 backdrop-blur-sm md:p-6" onClick={onClose}>
-      <div className="mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="relative mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <header className="flex items-center justify-between gap-3 border-b border-border bg-white px-3 py-3 md:px-5">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-950 md:text-base">{file.original_name}</p>
@@ -1490,33 +1490,84 @@ function MediaLightbox({
           </div>
 
           {showDetails && (
-            <aside className="flex max-h-[44vh] w-full flex-col overflow-hidden border-t border-border bg-white md:h-full md:max-h-none md:w-80 md:border-l md:border-t-0">
-              <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-4">
-                <h3 className="font-semibold text-slate-950">Details</h3>
-                <button onClick={() => setShowDetails(false)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-950"><X className="h-4 w-4" /></button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                <div className="space-y-3 text-sm">
-                  <LightboxMeta label="Name" value={file.original_name} />
-                  <LightboxMeta label="Type" value={file.mime_type} />
-                  <LightboxMeta label="Size" value={formatBytes(file.size_bytes)} />
-                  <LightboxMeta label="Uploaded" value={formatDate(file.created_at)} />
+            <>
+              <aside className="hidden h-full w-80 flex-col overflow-hidden border-l border-border bg-white md:flex">
+                <LightboxDetailsPanel
+                  file={file}
+                  onClose={() => setShowDetails(false)}
+                  onDetails={onDetails}
+                  onFavorite={onFavorite}
+                  onDelete={onDelete}
+                />
+              </aside>
+
+              <div className="absolute inset-x-0 bottom-0 z-30 rounded-t-2xl border-t border-border bg-white shadow-2xl md:hidden" onClick={(event) => event.stopPropagation()}>
+                <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-slate-200" />
+                <div className="flex max-h-[72vh] flex-col overflow-hidden">
+                  <LightboxDetailsPanel
+                    file={file}
+                    onClose={() => setShowDetails(false)}
+                    onDetails={onDetails}
+                    onFavorite={onFavorite}
+                    onDelete={onDelete}
+                    compact
+                  />
                 </div>
-                <p className="mt-4 text-xs leading-5 text-slate-500">Use the full details panel to rename files or move them to another folder.</p>
               </div>
-              <div className="border-t border-border bg-white px-4 py-4">
-                <div className="grid gap-2">
-                  <button onClick={() => onDetails(file)} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">Open full details</button>
-                  <a href={getDownloadUrl(file.id)} className="rounded-lg border border-border px-3 py-2 text-center text-sm font-medium text-slate-700 hover:bg-slate-50">Download</a>
-                  <button onClick={() => onFavorite(file)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">{file.is_favorite ? 'Unstar' : 'Star'}</button>
-                  <button onClick={() => onDelete(file)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50">Delete</button>
-                </div>
-              </div>
-            </aside>
+            </>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function LightboxDetailsPanel({
+  file,
+  onClose,
+  onDetails,
+  onFavorite,
+  onDelete,
+  compact = false,
+}: {
+  file: StoredFile;
+  onClose: () => void;
+  onDetails: (file: StoredFile) => void;
+  onFavorite: (file: StoredFile) => void;
+  onDelete: (file: StoredFile) => void;
+  compact?: boolean;
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-4">
+        <div className="min-w-0">
+          <h3 className="font-semibold text-slate-950">Details</h3>
+          {compact && <p className="truncate text-xs text-slate-500">{file.original_name}</p>}
+        </div>
+        <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-950">
+          <X className="h-5 w-5 md:h-4 md:w-4" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className="space-y-3 text-sm">
+          <LightboxMeta label="Name" value={file.original_name} />
+          <LightboxMeta label="Type" value={file.mime_type} />
+          <LightboxMeta label="Size" value={formatBytes(file.size_bytes)} />
+          <LightboxMeta label="Uploaded" value={formatDate(file.created_at)} />
+        </div>
+        <p className="mt-4 text-xs leading-5 text-slate-500">Use the full details panel to rename files or move them to another folder.</p>
+      </div>
+
+      <div className="border-t border-border bg-white px-4 py-4">
+        <div className="grid gap-2">
+          <button onClick={() => onDetails(file)} className="rounded-lg bg-primary px-3 py-2.5 text-sm font-semibold text-white hover:bg-[#1e40af]">Open full details</button>
+          <a href={getDownloadUrl(file.id)} className="rounded-lg border border-border px-3 py-2.5 text-center text-sm font-medium text-slate-700 hover:bg-slate-50">Download</a>
+          <button onClick={() => onFavorite(file)} className="rounded-lg border border-border px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">{file.is_favorite ? 'Unstar' : 'Star'}</button>
+          <button onClick={() => onDelete(file)} className="rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50">Delete</button>
+        </div>
+      </div>
+    </>
   );
 }
 
