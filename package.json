@@ -1,0 +1,31 @@
+{
+  "name": "telecloud-personal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "cf:dev": "wrangler pages dev dist --compatibility-date=2026-06-28",
+    "cf:deploy": "npm run build && wrangler pages deploy dist --project-name telecloud-personal",
+    "d1:create": "wrangler d1 create telecloud_personal_db",
+    "d1:migrate:local": "wrangler d1 execute telecloud_personal_db --local --file=migrations/0001_init.sql",
+    "d1:migrate:remote": "wrangler d1 execute telecloud_personal_db --remote --file=migrations/0001_init.sql"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "autoprefixer": "latest",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "wrangler": "latest"
+  }
+}

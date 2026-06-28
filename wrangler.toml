@@ -1,0 +1,9 @@
+name = "telecloud-personal"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-06-28"
+
+# After running `wrangler d1 create telecloud_personal_db`, replace database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "telecloud_personal_db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

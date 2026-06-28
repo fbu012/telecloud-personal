@@ -1,0 +1,112 @@
+import { errorJson, getTelegramApiBase, json, logEvent, nowIso, sanitizeFileName, type Env } from '../_common';
+
+interface FileRow {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  checksum_sha256: string | null;
+  telegram_chat_id: string;
+  telegram_message_id: number;
+  telegram_file_id: string | null;
+  telegram_file_unique_id: string | null;
+  storage_provider: string;
+  upload_mode: string;
+  status: string;
+  is_favorite: number;
+  tags_json: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+  const id = new URL(request.url).searchParams.get('id');
+  if (!id) return errorJson('Query `id` wajib diisi', 400);
+
+  const file = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
+  if (!file) return errorJson('File tidak ditemukan', 404);
+
+  return json({ ok: true, file: normalizeFile(file) });
+};
+
+export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
+  const id = new URL(request.url).searchParams.get('id');
+  if (!id) return errorJson('Query `id` wajib diisi', 400);
+
+  const existing = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
+  if (!existing) return errorJson('File tidak ditemukan', 404);
+
+  let body: { original_name?: string; is_favorite?: boolean; tags?: string[]; notes?: string | null };
+  try {
+    body = await request.json();
+  } catch {
+    return errorJson('Invalid JSON body', 400);
+  }
+
+  const originalName = typeof body.original_name === 'string' ? sanitizeFileName(body.original_name) : existing.original_name;
+  const isFavorite = typeof body.is_favorite === 'boolean' ? (body.is_favorite ? 1 : 0) : existing.is_favorite;
+  const tags = Array.isArray(body.tags) ? body.tags.filter((tag) => typeof tag === 'string').slice(0, 20) : safeParseTags(existing.tags_json);
+  const notes = typeof body.notes === 'string' || body.notes === null ? body.notes : existing.notes;
+  const updatedAt = nowIso();
+
+  await env.DB.prepare(
+    'UPDATE files SET original_name = ?, is_favorite = ?, tags_json = ?, notes = ?, updated_at = ? WHERE id = ?',
+  )
+    .bind(originalName, isFavorite, JSON.stringify(tags), notes, updatedAt, id)
+    .run();
+
+  const updated = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
+  return json({ ok: true, file: normalizeFile(updated!) });
+};
+
+export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
+  const url = new URL(request.url);
+  const id = url.searchParams.get('id');
+  const hard = url.searchParams.get('hard') === 'true';
+  if (!id) return errorJson('Query `id` wajib diisi', 400);
+
+  const file = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
+  if (!file) return errorJson('File tidak ditemukan', 404);
+
+  if (hard) {
+    if (env.DELETE_TELEGRAM_ON_HARD_DELETE === 'true' && env.BOT_TOKEN) {
+      const telegramUrl = `${getTelegramApiBase(env)}/bot${env.BOT_TOKEN}/deleteMessage`;
+      await fetch(telegramUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: file.telegram_chat_id, message_id: file.telegram_message_id }),
+      }).catch(() => undefined);
+    }
+
+    await env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run();
+    await logEvent(env, 'file_hard_deleted', 'File hard deleted', { id, original_name: file.original_name });
+    return json({ ok: true, hard_deleted: true });
+  }
+
+  const deletedAt = nowIso();
+  await env.DB.prepare('UPDATE files SET status = ?, deleted_at = ?, updated_at = ? WHERE id = ?')
+    .bind('trash', deletedAt, deletedAt, id)
+    .run();
+  await logEvent(env, 'file_trashed', 'File dipindah ke trash', { id, original_name: file.original_name });
+
+  return json({ ok: true, trashed: true });
+};
+
+function normalizeFile(file: FileRow) {
+  return {
+    ...file,
+    is_favorite: Boolean(file.is_favorite),
+    tags: safeParseTags(file.tags_json),
+  };
+}
+
+function safeParseTags(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}

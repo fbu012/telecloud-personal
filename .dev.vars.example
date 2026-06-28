@@ -1,0 +1,8 @@
+ADMIN_PASSWORD=change-me-now
+SESSION_SECRET=change-this-to-a-long-random-secret-at-least-32-chars
+BOT_TOKEN=123456789:AA_your_bot_token_here
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_API_BASE=https://api.telegram.org
+MAX_FILE_SIZE_MB=20
+APP_NAME=TeleCloud Personal
+DELETE_TELEGRAM_ON_HARD_DELETE=false
