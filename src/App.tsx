@@ -890,39 +890,44 @@ function Toolbar({
   onSortChange: (sort: SortMode) => void;
   onTypeFilterChange: (type: string) => void;
 }) {
+  const compactSelectClass = 'w-full min-w-0 rounded-lg border border-border bg-white px-2 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary md:px-3';
+
   return (
-    <div className="flex flex-wrap items-center gap-3 border-b border-border bg-white px-4 py-3">
-      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-        Type
+    <div className="grid grid-cols-3 gap-2 border-b border-border bg-white px-4 py-3 md:flex md:flex-wrap md:items-center md:gap-3">
+      <label className="min-w-0 text-xs font-medium uppercase tracking-wide text-slate-500 md:flex md:items-center md:gap-2">
+        <span className="hidden md:inline">Type</span>
         <select
           value={typeFilter}
           onChange={(event) => onTypeFilterChange(event.target.value)}
-          className="min-w-[150px] rounded-lg border border-border bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary"
+          className={cx(compactSelectClass, 'md:min-w-[150px]')}
+          aria-label="Type"
         >
           {typeFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
         </select>
       </label>
 
-      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-        Sort
+      <label className="min-w-0 text-xs font-medium uppercase tracking-wide text-slate-500 md:flex md:items-center md:gap-2">
+        <span className="hidden md:inline">Sort</span>
         <select
           value={sortMode}
           onChange={(event) => onSortChange(event.target.value as SortMode)}
-          className="min-w-[170px] rounded-lg border border-border bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary"
+          className={cx(compactSelectClass, 'md:min-w-[170px]')}
+          aria-label="Sort"
         >
           {sortOptions.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
         </select>
       </label>
 
-      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-        View
+      <label className="min-w-0 text-xs font-medium uppercase tracking-wide text-slate-500 md:flex md:items-center md:gap-2">
+        <span className="hidden md:inline">View</span>
         <select
           value={layoutMode}
           onChange={(event) => onLayoutChange(event.target.value as LayoutMode)}
-          className="min-w-[140px] rounded-lg border border-border bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary"
+          className={cx(compactSelectClass, 'md:min-w-[140px]')}
+          aria-label="View"
         >
-          <option value="list">List view</option>
-          <option value="grid">Grid view</option>
+          <option value="list">List</option>
+          <option value="grid">Grid</option>
         </select>
       </label>
     </div>
