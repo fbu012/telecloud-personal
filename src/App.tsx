@@ -409,11 +409,26 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     setUnlockTarget(null);
   }
 
+  async function requestFolderActionToken(folder: FolderItem, actionLabel: string): Promise<string | null> {
+    if (!folder.is_secure) return null;
+
+    const password = window.prompt(`Password folder diperlukan untuk ${actionLabel}: "${folder.name}"`);
+    if (!password) return null;
+
+    const token = await unlockFolder(folder.id, password);
+    setFolderTokens((prev) => ({ ...prev, [folder.id]: token }));
+    return token;
+  }
+
   async function renameFolder(folder: FolderItem) {
-    const name = window.prompt('Rename folder', folder.name);
-    if (!name?.trim() || name.trim() === folder.name) return;
     try {
-      const updated = await updateFolder(folder.id, { name: name.trim() });
+      const folderToken = await requestFolderActionToken(folder, 'rename folder');
+      if (folder.is_secure && !folderToken) return;
+
+      const name = window.prompt('Rename folder', folder.name);
+      if (!name?.trim() || name.trim() === folder.name) return;
+
+      const updated = await updateFolder(folder.id, { name: name.trim(), folder_token: folderToken });
       setFolders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setNotice(`Folder renamed to "${updated.name}"`);
     } catch (err) {
@@ -422,10 +437,19 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   }
 
   async function removeFolder(folder: FolderItem) {
-    if (!window.confirm(`Delete empty folder "${folder.name}"?`)) return;
     try {
-      await deleteFolder(folder.id);
+      const folderToken = await requestFolderActionToken(folder, 'delete folder');
+      if (folder.is_secure && !folderToken) return;
+
+      if (!window.confirm(`Delete empty folder "${folder.name}"?`)) return;
+
+      await deleteFolder(folder.id, folderToken);
       setFolders((prev) => prev.filter((item) => item.id !== folder.id));
+      setFolderTokens((prev) => {
+        const copy = { ...prev };
+        delete copy[folder.id];
+        return copy;
+      });
       if (currentFolderId === folder.id) setCurrentFolderId(folder.parent_id || null);
       setNotice(`Folder "${folder.name}" deleted`);
     } catch (err) {
@@ -434,10 +458,14 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   }
 
   async function setFolderPassword(folder: FolderItem) {
-    const password = window.prompt(folder.is_secure ? 'New folder password' : 'Set folder password');
-    if (!password) return;
     try {
-      const updated = await updateFolder(folder.id, { secure_password: password });
+      const folderToken = await requestFolderActionToken(folder, folder.is_secure ? 'change password' : 'set password');
+      if (folder.is_secure && !folderToken) return;
+
+      const password = window.prompt(folder.is_secure ? 'New folder password' : 'Set folder password');
+      if (!password) return;
+
+      const updated = await updateFolder(folder.id, { secure_password: password, folder_token: folderToken });
       setFolders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setFolderTokens((prev) => {
         const copy = { ...prev };
@@ -451,9 +479,13 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   }
 
   async function removeFolderPassword(folder: FolderItem) {
-    if (!window.confirm(`Remove secure password from "${folder.name}"?`)) return;
     try {
-      const updated = await updateFolder(folder.id, { remove_secure_password: true });
+      const folderToken = await requestFolderActionToken(folder, 'remove password');
+      if (folder.is_secure && !folderToken) return;
+
+      if (!window.confirm(`Remove secure password from "${folder.name}"?`)) return;
+
+      const updated = await updateFolder(folder.id, { remove_secure_password: true, folder_token: folderToken });
       setFolders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setFolderTokens((prev) => {
         const copy = { ...prev };

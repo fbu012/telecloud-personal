@@ -76,19 +76,26 @@ export async function createFolder(name: string, parent_id: string | null): Prom
   return data.folder;
 }
 
-export async function updateFolder(id: string, patch: Partial<Pick<FolderItem, 'name'>> & { secure_password?: string; remove_secure_password?: boolean }): Promise<FolderItem> {
-  const response = await fetch(`/api/folders/item?id=${encodeURIComponent(id)}`, {
+export async function updateFolder(id: string, patch: Partial<Pick<FolderItem, 'name'>> & { secure_password?: string; remove_secure_password?: boolean; folder_token?: string | null }): Promise<FolderItem> {
+  const { folder_token, ...body } = patch;
+  const url = new URL('/api/folders/item', window.location.origin);
+  url.searchParams.set('id', id);
+  if (folder_token) url.searchParams.set('folder_token', folder_token);
+  const response = await fetch(url.toString(), {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(patch),
+    body: JSON.stringify(body),
   });
   const data = await parseJson<{ ok: true; folder: FolderItem }>(response);
   return data.folder;
 }
 
-export async function deleteFolder(id: string): Promise<void> {
-  const response = await fetch(`/api/folders/item?id=${encodeURIComponent(id)}`, {
+export async function deleteFolder(id: string, folderToken?: string | null): Promise<void> {
+  const url = new URL('/api/folders/item', window.location.origin);
+  url.searchParams.set('id', id);
+  if (folderToken) url.searchParams.set('folder_token', folderToken);
+  const response = await fetch(url.toString(), {
     method: 'DELETE',
     credentials: 'include',
   });

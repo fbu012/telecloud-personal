@@ -1,4 +1,4 @@
-import { createFolderSalt, errorJson, hashFolderPassword, json, nowIso, sanitizeFileName, type Env } from '../_common';
+import { createFolderSalt, errorJson, getFolderUnlockTokenFromRequest, hashFolderPassword, json, nowIso, sanitizeFileName, verifyFolderUnlockToken, type Env } from '../_common';
 
 interface FolderRow {
   id: string;
@@ -24,6 +24,13 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     body = await request.json();
   } catch {
     return errorJson('Invalid JSON body', 400);
+  }
+
+  if (existing.is_secure) {
+    const unlocked = await verifyFolderUnlockToken(env, getFolderUnlockTokenFromRequest(request), existing.id);
+    if (!unlocked) {
+      return errorJson('Folder terkunci. Masukkan password folder sebelum menjalankan action ini.', 423, { folder_id: existing.id, secure_folder: true });
+    }
   }
 
   const name = sanitizeFolderName(body.name || existing.name);
@@ -65,6 +72,13 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 
   const existing = await env.DB.prepare('SELECT * FROM folders WHERE id = ? LIMIT 1').bind(id).first<FolderRow>();
   if (!existing) return errorJson('Folder tidak ditemukan', 404);
+
+  if (existing.is_secure) {
+    const unlocked = await verifyFolderUnlockToken(env, getFolderUnlockTokenFromRequest(request), existing.id);
+    if (!unlocked) {
+      return errorJson('Folder terkunci. Masukkan password folder sebelum menjalankan action ini.', 423, { folder_id: existing.id, secure_folder: true });
+    }
+  }
 
   const child = await env.DB.prepare('SELECT id FROM folders WHERE parent_id = ? LIMIT 1').bind(id).first<{ id: string }>();
   if (child) return errorJson('Folder masih punya subfolder. Kosongkan dulu sebelum dihapus.', 409);
