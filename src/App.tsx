@@ -9,16 +9,19 @@ import {
   Info,
   X,
   Cloud,
+  Copy,
   Download,
   File as FileIcon,
   FileText,
   Folder,
+  ExternalLink,
   FolderPlus,
   Grid3X3,
   HardDrive,
   Home,
   Image,
   LayoutGrid,
+  Link2,
   List,
   Loader2,
   LogOut,
@@ -38,27 +41,33 @@ import {
 import {
   ApiError,
   bulkFileAction,
+  createShareLink,
   createFolder,
   deleteFile,
   deleteFolder,
   getDownloadUrl,
+  getPublicDownloadUrl,
+  getPublicShare,
   getMe,
   getPreviewUrl,
   getSettings,
   listFiles,
   listFolders,
+  listShareLinks,
   login,
   logout,
+  revokeShareLink,
   updateFile,
   updateFolder,
   uploadFile,
 } from './lib/api';
 import { formatBytes, formatDate, getTypeGroup, typeLabel } from './lib/format';
-import type { FolderItem, Settings, StoredFile, UploadItem, ViewMode } from './lib/types';
+import type { FolderItem, PublicSharedFile, PublicShareData, Settings, ShareLink, StoredFile, UploadItem, ViewMode } from './lib/types';
 
 type LayoutMode = 'list' | 'grid';
 type SortMode = 'newest' | 'oldest' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc' | 'type';
 type NavItem = { key: ViewMode; label: string; icon: typeof Folder; hint?: string };
+type ShareTarget = { type: 'file'; file: StoredFile } | { type: 'folder'; folder: FolderItem };
 
 const typeFilters = [
   { value: 'all', label: 'All types' },
@@ -92,6 +101,12 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 export default function App() {
+  const shareToken = getShareTokenFromPath();
+  if (shareToken) return <PublicSharePage token={shareToken} />;
+  return <PrivateApp />;
+}
+
+function PrivateApp() {
   const [booting, setBooting] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [appName, setAppName] = useState('TeleCloud Personal');
@@ -202,6 +217,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<StoredFile | null>(null);
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [lightboxFileId, setLightboxFileId] = useState<string | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -502,6 +518,8 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onFavorite={toggleFavorite}
                 onSelect={setSelected}
                 onPreview={(file) => setLightboxFileId(file.id)}
+                onShareFile={(file) => setShareTarget({ type: 'file', file })}
+                onShareFolder={(folder) => setShareTarget({ type: 'folder', folder })}
                 allFolders={folders}
                 selectedIds={selectedIds}
                 selectedCount={selectedFiles.length}
@@ -544,6 +562,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onBulkDelete={() => runBulkAction('delete')}
                 onBulkMove={() => runBulkAction('move')}
                 onBulkCopy={() => runBulkAction('copy')}
+                onShareFile={(file) => setShareTarget({ type: 'file', file })}
               />
             )}
           </div>
@@ -591,6 +610,8 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
           }}
         />
       )}
+
+      {shareTarget && <ShareLinkModal target={shareTarget} onClose={() => setShareTarget(null)} />}
     </div>
   );
 }
@@ -801,6 +822,8 @@ function CorporateDriveView(props: {
   onFavorite: (file: StoredFile) => void;
   onSelect: (file: StoredFile) => void;
   onPreview?: (file: StoredFile) => void;
+  onShareFile: (file: StoredFile) => void;
+  onShareFolder: (folder: FolderItem) => void;
   selectedIds: string[];
   selectedCount: number;
   bulkTargetFolderId: string;
@@ -833,11 +856,11 @@ function CorporateDriveView(props: {
       <Toolbar layoutMode={props.layoutMode} sortMode={props.sortMode} typeFilter={props.typeFilter} onLayoutChange={props.onLayoutChange} onSortChange={props.onSortChange} onTypeFilterChange={props.onTypeFilterChange} />
 
       <div className="p-4">
-        <FolderSection folders={props.folders} onOpenFolder={props.onOpenFolder} onMoveFile={props.onMoveFile} onRenameFolder={props.onRenameFolder} onDeleteFolder={props.onDeleteFolder} draggingFileId={props.draggingFileId} />
+        <FolderSection folders={props.folders} onOpenFolder={props.onOpenFolder} onMoveFile={props.onMoveFile} onRenameFolder={props.onRenameFolder} onDeleteFolder={props.onDeleteFolder} onShareFolder={props.onShareFolder} draggingFileId={props.draggingFileId} />
         {props.loading ? <LoadingState /> : props.layoutMode === 'grid' ? (
-          <GridFiles files={props.files} onSelect={props.onSelect} onPreview={props.onPreview} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
+          <GridFiles files={props.files} onSelect={props.onSelect} onPreview={props.onPreview} onShare={props.onShareFile} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
         ) : (
-          <FilesTable files={props.files} folders={props.allFolders} onSelect={props.onSelect} onPreview={props.onPreview} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} selectedIds={props.selectedIds} selectedCount={props.selectedCount} bulkTargetFolderId={props.bulkTargetFolderId} bulkBusy={props.bulkBusy} onBulkTargetFolderChange={props.onBulkTargetFolderChange} onToggleSelected={props.onToggleSelected} onToggleSelectAll={props.onToggleSelectAll} onClearSelection={props.onClearSelection} onBulkDelete={props.onBulkDelete} onBulkMove={props.onBulkMove} onBulkCopy={props.onBulkCopy} />
+          <FilesTable files={props.files} folders={props.allFolders} onSelect={props.onSelect} onPreview={props.onPreview} onShare={props.onShareFile} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} selectedIds={props.selectedIds} selectedCount={props.selectedCount} bulkTargetFolderId={props.bulkTargetFolderId} bulkBusy={props.bulkBusy} onBulkTargetFolderChange={props.onBulkTargetFolderChange} onToggleSelected={props.onToggleSelected} onToggleSelectAll={props.onToggleSelectAll} onClearSelection={props.onClearSelection} onBulkDelete={props.onBulkDelete} onBulkMove={props.onBulkMove} onBulkCopy={props.onBulkCopy} />
         )}
       </div>
     </div>
@@ -859,6 +882,7 @@ function CorporateCollectionView({
   onFavorite,
   onSelect,
   onPreview,
+  onShareFile,
   setDraggingFileId,
   folders,
   selectedIds,
@@ -887,6 +911,7 @@ function CorporateCollectionView({
   onFavorite: (file: StoredFile) => void;
   onSelect: (file: StoredFile) => void;
   onPreview?: (file: StoredFile) => void;
+  onShareFile: (file: StoredFile) => void;
   setDraggingFileId: (id: string | null) => void;
   folders: FolderItem[];
   selectedIds: string[];
@@ -915,9 +940,9 @@ function CorporateCollectionView({
       <Toolbar layoutMode={layoutMode} sortMode={sortMode} typeFilter={typeFilter} onLayoutChange={onLayoutChange} onSortChange={onSortChange} onTypeFilterChange={onTypeFilterChange} />
       <div className="p-4">
         {loading ? <LoadingState /> : layoutMode === 'grid' ? (
-          <GridFiles files={files} onSelect={openFile} onPreview={onPreview} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
+          <GridFiles files={files} onSelect={openFile} onPreview={onPreview} onDetails={detailAction} onShare={onShareFile} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
         ) : (
-          <FilesTable files={files} folders={folders} onSelect={openFile} onPreview={onPreview} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} selectedIds={selectedIds} selectedCount={selectedCount} bulkTargetFolderId={bulkTargetFolderId} bulkBusy={bulkBusy} onBulkTargetFolderChange={onBulkTargetFolderChange} onToggleSelected={onToggleSelected} onToggleSelectAll={onToggleSelectAll} onClearSelection={onClearSelection} onBulkDelete={onBulkDelete} onBulkMove={onBulkMove} onBulkCopy={onBulkCopy} />
+          <FilesTable files={files} folders={folders} onSelect={openFile} onPreview={onPreview} onDetails={detailAction} onShare={onShareFile} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} selectedIds={selectedIds} selectedCount={selectedCount} bulkTargetFolderId={bulkTargetFolderId} bulkBusy={bulkBusy} onBulkTargetFolderChange={onBulkTargetFolderChange} onToggleSelected={onToggleSelected} onToggleSelectAll={onToggleSelectAll} onClearSelection={onClearSelection} onBulkDelete={onBulkDelete} onBulkMove={onBulkMove} onBulkCopy={onBulkCopy} />
         )}
       </div>
     </div>
@@ -944,6 +969,7 @@ function FolderSection({
   onMoveFile,
   onRenameFolder,
   onDeleteFolder,
+  onShareFolder,
   draggingFileId,
 }: {
   folders: FolderItem[];
@@ -951,6 +977,7 @@ function FolderSection({
   onMoveFile: (fileId: string, folderId: string | null) => void;
   onRenameFolder: (folder: FolderItem) => void;
   onDeleteFolder: (folder: FolderItem) => void;
+  onShareFolder: (folder: FolderItem) => void;
   onDropFilesToFolder?: (files: File[], folderId: string) => void;
   draggingFileId: string | null;
 }) {
@@ -995,7 +1022,7 @@ function FolderSection({
             </button>
 
             {openMenuId === folder.id && (
-              <div className="absolute right-2 top-12 z-20 w-40 overflow-hidden rounded-lg border border-border bg-white shadow-lg">
+              <div className="absolute right-2 top-12 z-20 w-44 overflow-hidden rounded-lg border border-border bg-white shadow-lg">
                 <button
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1005,6 +1032,16 @@ function FolderSection({
                   className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                 >
                   Open
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenMenuId(null);
+                    onShareFolder(folder);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Share link
                 </button>
                 <button
                   onClick={(event) => {
@@ -1040,6 +1077,7 @@ function FilesTable({
   folders,
   onSelect,
   onPreview,
+  onShare,
   onDetails,
   onFavorite,
   onDelete,
@@ -1060,6 +1098,7 @@ function FilesTable({
   folders: FolderItem[];
   onSelect: (file: StoredFile) => void;
   onPreview?: (file: StoredFile) => void;
+  onShare: (file: StoredFile) => void;
   onDetails?: (file: StoredFile) => void;
   onFavorite: (file: StoredFile) => void;
   onDelete: (file: StoredFile) => void;
@@ -1162,7 +1201,7 @@ function FilesTable({
                   <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
                   <td className="hidden px-4 py-3 text-slate-600 xl:table-cell">{formatDate(file.created_at)}</td>
                   <td className="px-4 py-3">
-                    <RowActions file={file} onDetails={onDetails} onFavorite={onFavorite} onDelete={onDelete} />
+                    <RowActions file={file} onDetails={onDetails} onShare={onShare} onFavorite={onFavorite} onDelete={onDelete} />
                   </td>
                 </tr>
               );
@@ -1174,7 +1213,7 @@ function FilesTable({
   );
 }
 
-function GridFiles({ files, onSelect, onPreview, onDetails, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onPreview?: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
+function GridFiles({ files, onSelect, onPreview, onDetails, onShare, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onPreview?: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onShare: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
   if (!files.length) return <EmptyState />;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
@@ -1188,7 +1227,7 @@ function GridFiles({ files, onSelect, onPreview, onDetails, onFavorite, onDelete
             <p className="mt-1 text-xs text-slate-500">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
             <div className="mt-3 flex items-center justify-between">
               <span className="text-xs text-slate-400">{formatDate(file.created_at)}</span>
-              <RowActions file={file} onDetails={onDetails} onFavorite={onFavorite} onDelete={onDelete} compact />
+              <RowActions file={file} onDetails={onDetails} onShare={onShare} onFavorite={onFavorite} onDelete={onDelete} compact />
             </div>
           </div>
         </div>
@@ -1323,11 +1362,168 @@ function LightboxMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RowActions({ file, onDetails, onFavorite, onDelete, compact = false }: { file: StoredFile; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; compact?: boolean }) {
+function ShareLinkModal({ target, onClose }: { target: ShareTarget; onClose: () => void }) {
+  const targetType = target.type;
+  const targetId = target.type === 'file' ? target.file.id : target.folder.id;
+  const targetName = target.type === 'file' ? target.file.original_name : target.folder.name;
+  const [links, setLinks] = useState<ShareLink[]>([]);
+  const [allowDownload, setAllowDownload] = useState(true);
+  const [expiresInDays, setExpiresInDays] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  const activeLink = links.find((link) => !link.revoked_at && (!link.expires_at || new Date(link.expires_at).getTime() > Date.now())) || null;
+  const shareUrl = activeLink ? `${window.location.origin}/s/${activeLink.token}` : '';
+
+  useEffect(() => {
+    setLoading(true);
+    listShareLinks(targetType, targetId)
+      .then(setLinks)
+      .catch((err) => setNotice(err instanceof Error ? err.message : 'Gagal memuat share link'))
+      .finally(() => setLoading(false));
+  }, [targetId, targetType]);
+
+  async function createLink() {
+    setBusy(true);
+    setNotice('');
+    try {
+      const link = await createShareLink({
+        target_type: targetType,
+        target_id: targetId,
+        allow_download: allowDownload,
+        expires_in_days: expiresInDays ? Number(expiresInDays) : null,
+      });
+      setLinks((prev) => [link, ...prev]);
+      setNotice('Share link dibuat');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal membuat share link');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeLink(id: string) {
+    if (!window.confirm('Revoke this share link? Link yang sudah dibagikan tidak bisa dipakai lagi.')) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      await revokeShareLink(id);
+      setLinks((prev) => prev.filter((item) => item.id !== id));
+      setNotice('Share link dicabut');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal revoke share link');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyLink() {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setNotice('Link copied');
+    } catch {
+      setNotice(shareUrl);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-3" onClick={onClose}>
+      <div className="w-full max-w-lg overflow-hidden rounded-lg border border-border bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-slate-950">Share link</h3>
+            <p className="truncate text-sm text-slate-500">{targetType === 'file' ? 'File' : 'Folder'} · {targetName}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950"><X className="h-5 w-5" /></button>
+        </div>
+
+        <div className="space-y-4 p-4">
+          {notice && <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">{notice}</div>}
+
+          {loading ? (
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-slate-50 p-4 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading share state...
+            </div>
+          ) : activeLink ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                <p className="text-sm font-semibold text-green-800">Link sharing enabled</p>
+                <p className="mt-1 text-xs text-green-700">
+                  Anyone with this link can view {targetType === 'file' ? 'this file' : 'files in this folder'}.
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <input readOnly value={shareUrl} className="min-w-0 flex-1 rounded-lg border border-border bg-slate-50 px-3 py-2 text-sm text-slate-700" />
+                <button onClick={copyLink} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">
+                  <Copy className="h-4 w-4" /> Copy
+                </button>
+              </div>
+
+              <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Download</p>
+                  <p className="mt-1 font-medium text-slate-900">{activeLink.allow_download ? 'Allowed' : 'View only'}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Expires</p>
+                  <p className="mt-1 font-medium text-slate-900">{activeLink.expires_at ? formatDate(activeLink.expires_at) : 'Never'}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <a href={shareUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                  <ExternalLink className="h-4 w-4" /> Open
+                </a>
+                <button onClick={() => revokeLink(activeLink.id)} disabled={busy} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">
+                  Revoke link
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border bg-slate-50 p-3 text-sm leading-6 text-slate-600">
+                Create a public link. Anyone with the link can open the shared page without logging into your admin dashboard.
+              </div>
+
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm">
+                <span>
+                  <span className="block font-medium text-slate-900">Allow download</span>
+                  <span className="block text-xs text-slate-500">If disabled, the share page can still preview supported media.</span>
+                </span>
+                <input type="checkbox" checked={allowDownload} onChange={(event) => setAllowDownload(event.target.checked)} className="h-4 w-4 rounded border-border text-primary focus:ring-primary" />
+              </label>
+
+              <label className="block text-sm">
+                <span className="mb-2 block font-medium text-slate-700">Expiration</span>
+                <select value={expiresInDays} onChange={(event) => setExpiresInDays(event.target.value)} className="w-full rounded-lg border border-border bg-white px-3 py-2 outline-none focus:border-primary">
+                  <option value="">Never</option>
+                  <option value="1">1 day</option>
+                  <option value="7">7 days</option>
+                  <option value="30">30 days</option>
+                </select>
+              </label>
+
+              <button onClick={createLink} disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1e40af] disabled:opacity-50">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                Create share link
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RowActions({ file, onDetails, onShare, onFavorite, onDelete, compact = false }: { file: StoredFile; onDetails?: (file: StoredFile) => void; onShare: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; compact?: boolean }) {
   const buttonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900';
   return (
     <div className="flex justify-end gap-1">
       {onDetails && <button onClick={() => onDetails(file)} className={buttonClass} title="Details"><Info className="h-4 w-4" /></button>}
+      <button onClick={() => onShare(file)} className={buttonClass} title="Share link"><Link2 className="h-4 w-4" /></button>
       <button onClick={() => onFavorite(file)} className={cx(buttonClass, file.is_favorite && 'text-amber-600 hover:text-amber-700')} title="Starred"><Star className={cx('h-4 w-4', file.is_favorite && 'fill-current')} /></button>
       <a href={getDownloadUrl(file.id)} className={buttonClass} title="Download"><Download className="h-4 w-4" /></a>
       {!compact && <button onClick={() => onDelete(file)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-4 w-4" /></button>}
@@ -1397,7 +1593,7 @@ function UploadQueue({
           const droppedFiles = Array.from(event.dataTransfer.files || []);
           if (droppedFiles.length) onAddFiles(droppedFiles);
         }}
-        className="m-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4"
+        className="m-4 max-h-[52vh] overflow-y-auto rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 lg:max-h-[calc(100vh-300px)]"
       >
         {items.length === 0 ? (
           <div className="flex min-h-[240px] flex-col items-center justify-center text-center">
@@ -1646,3 +1842,157 @@ function iconForMime(mime: string) {
   if (group === 'document') return FileText;
   return FileIcon;
 }
+
+function getShareTokenFromPath() {
+  const path = window.location.pathname;
+  if (!path.startsWith('/s/')) return null;
+  const token = decodeURIComponent(path.slice(3).split('/')[0] || '');
+  return token || null;
+}
+
+function PublicSharePage({ token }: { token: string }) {
+  const [data, setData] = useState<PublicShareData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getPublicShare(token)
+      .then(setData)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Share link tidak valid'))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const title = data?.target_type === 'folder' ? data.folder?.name || 'Shared folder' : data?.file?.original_name || 'Shared file';
+
+  return (
+    <div className="min-h-screen bg-[#F6F8FB] px-4 py-6 text-slate-950">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-white px-4 py-3 shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-white"><Cloud className="h-5 w-5" /></div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-950">TeleCloud Share</p>
+            <p className="truncate text-xs text-slate-500">Private file link</p>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
+          <div className="border-b border-border px-5 py-4">
+            <h1 className="truncate text-xl font-semibold text-slate-950">{loading ? 'Loading shared link...' : title}</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {data?.target_type === 'folder' ? `${data.files.length} file(s) shared` : data?.file ? `${typeLabel(data.file.mime_type)} · ${formatBytes(data.file.size_bytes)}` : 'Only people with this link can open this page.'}
+            </p>
+          </div>
+
+          <div className="p-5">
+            {loading ? (
+              <div className="flex min-h-[280px] items-center justify-center text-slate-500">
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading share...
+              </div>
+            ) : error ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+            ) : data?.target_type === 'file' && data.file ? (
+              <PublicFilePreview token={token} file={data.file} allowDownload={data.allow_download} />
+            ) : data?.target_type === 'folder' ? (
+              <PublicFolderView token={token} files={data.files} allowDownload={data.allow_download} />
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PublicFilePreview({ token, file, allowDownload }: { token: string; file: PublicSharedFile; allowDownload: boolean }) {
+  const group = getTypeGroup(file.mime_type);
+  const inlineUrl = getPublicDownloadUrl(token, file.id, true);
+  const downloadUrl = getPublicDownloadUrl(token, file.id, false);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex min-h-[320px] items-center justify-center overflow-hidden rounded-lg border border-border bg-slate-50 p-4">
+        {group === 'image' ? (
+          <img src={inlineUrl} alt={file.original_name} className="max-h-[70vh] max-w-full rounded-lg object-contain" />
+        ) : group === 'video' ? (
+          <video src={inlineUrl} controls className="max-h-[70vh] max-w-full rounded-lg" />
+        ) : (
+          <div className="text-center">
+            <FileIcon className="mx-auto h-14 w-14 text-slate-400" />
+            <p className="mt-3 font-semibold text-slate-900">{file.original_name}</p>
+            <p className="mt-1 text-sm text-slate-500">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-slate-50 p-3">
+        <div>
+          <p className="font-semibold text-slate-950">{file.original_name}</p>
+          <p className="text-sm text-slate-500">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
+        </div>
+        {allowDownload ? (
+          <a href={downloadUrl} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">
+            <Download className="h-4 w-4" /> Download
+          </a>
+        ) : (
+          <span className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-500">Download disabled</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PublicFolderView({ token, files, allowDownload }: { token: string; files: PublicSharedFile[]; allowDownload: boolean }) {
+  if (!files.length) {
+    return <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">Folder ini belum berisi file yang bisa dibagikan.</div>;
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <table className="min-w-full divide-y divide-border text-left text-sm">
+        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-4 py-3 font-semibold">Name</th>
+            <th className="hidden px-4 py-3 font-semibold md:table-cell">Type</th>
+            <th className="hidden px-4 py-3 font-semibold md:table-cell">Size</th>
+            <th className="px-4 py-3 text-right font-semibold">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border bg-white">
+          {files.map((file) => {
+            const group = getTypeGroup(file.mime_type);
+            const inlineUrl = getPublicDownloadUrl(token, file.id, true);
+            const downloadUrl = getPublicDownloadUrl(token, file.id, false);
+            return (
+              <tr key={file.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    {group === 'image' ? (
+                      <img src={inlineUrl} alt={file.original_name} className="h-10 w-10 rounded-md object-cover" loading="lazy" />
+                    ) : (
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><FileIcon className="h-5 w-5" /></span>
+                    )}
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-slate-950">{file.original_name}</span>
+                      <span className="block truncate text-xs text-slate-500 md:hidden">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</span>
+                    </span>
+                  </div>
+                </td>
+                <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{typeLabel(file.mime_type)}</td>
+                <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
+                <td className="px-4 py-3 text-right">
+                  {allowDownload ? (
+                    <a href={downloadUrl} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      <Download className="h-4 w-4" /> Download
+                    </a>
+                  ) : (
+                    <span className="text-sm text-slate-500">View only</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+

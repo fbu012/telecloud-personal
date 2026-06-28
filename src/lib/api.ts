@@ -1,4 +1,4 @@
-import type { FolderItem, Settings, StoredFile } from './types';
+import type { FolderItem, PublicShareData, Settings, ShareLink, StoredFile } from './types';
 
 export class ApiError extends Error {
   status: number;
@@ -152,4 +152,53 @@ export async function bulkFileAction(
   });
   const data = await parseJson<{ ok: true; files?: StoredFile[]; count: number }>(response);
   return data;
+}
+
+export async function listShareLinks(targetType: 'file' | 'folder', targetId: string): Promise<ShareLink[]> {
+  const url = new URL('/api/share-links', window.location.origin);
+  url.searchParams.set('target_type', targetType);
+  url.searchParams.set('target_id', targetId);
+  const response = await fetch(url.toString(), { credentials: 'include' });
+  const data = await parseJson<{ ok: true; share_links: ShareLink[] }>(response);
+  return data.share_links;
+}
+
+export async function createShareLink(params: {
+  target_type: 'file' | 'folder';
+  target_id: string;
+  allow_download: boolean;
+  expires_in_days?: number | null;
+}): Promise<ShareLink> {
+  const response = await fetch('/api/share-links', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await parseJson<{ ok: true; share_link: ShareLink }>(response);
+  return data.share_link;
+}
+
+export async function revokeShareLink(id: string): Promise<void> {
+  const response = await fetch(`/api/share-links/item?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  await parseJson(response);
+}
+
+export async function getPublicShare(token: string): Promise<PublicShareData> {
+  const url = new URL('/api/public/share', window.location.origin);
+  url.searchParams.set('token', token);
+  const response = await fetch(url.toString());
+  const data = await parseJson<PublicShareData>(response);
+  return data;
+}
+
+export function getPublicDownloadUrl(token: string, fileId?: string, inline = false): string {
+  const url = new URL('/api/public/download', window.location.origin);
+  url.searchParams.set('token', token);
+  if (fileId) url.searchParams.set('file_id', fileId);
+  if (inline) url.searchParams.set('disposition', 'inline');
+  return `${url.pathname}${url.search}`;
 }

@@ -53,3 +53,33 @@ export interface Settings {
   bot_token_configured: boolean;
   migration_ready: boolean;
 }
+
+export interface ShareLink {
+  id: string;
+  token: string;
+  target_type: 'file' | 'folder';
+  target_id: string;
+  allow_download: boolean;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublicSharedFile {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublicShareData {
+  ok: true;
+  target_type: 'file' | 'folder';
+  allow_download: boolean;
+  file?: PublicSharedFile;
+  folder?: FolderItem;
+  files: PublicSharedFile[];
+}
