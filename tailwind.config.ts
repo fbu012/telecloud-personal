@@ -21,7 +21,7 @@ export default {
         '2xl': 'calc(var(--radius) + 4px)',
       },
       boxShadow: {
-        soft: '0 12px 40px rgba(15, 23, 42, 0.08)',
+        soft: '0 6px 18px rgba(15, 23, 42, 0.06)',
       },
     },
   },

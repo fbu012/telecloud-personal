@@ -1,57 +1,42 @@
-# Style Guide — Private Cloud Minimal
+# TeleCloud Corporate Style Guide
 
-## Mood
+## Visual direction
 
-```txt
-Clean
-Soft
-Modern
-Aman
-Tidak ramai
-```
+TeleCloud uses a corporate dashboard style: compact spacing, clear borders, minimal shadows, and table-first file management.
 
-## Color Palette
+## Radius
 
-| Token | HEX |
+Use `8px` for buttons, inputs, cards, dialogs, dropdowns, and table containers.
+
+Avoid large consumer-style radii such as `24px`, `28px`, `32px`, and `rounded-full` except for tiny status dots or avatars.
+
+## Color palette
+
+| Token | Value |
 |---|---:|
-| Background | `#F8FAFC` |
-| Card | `#FFFFFF` |
-| Muted | `#F1F5F9` |
-| Border | `#E2E8F0` |
-| Text Primary | `#0F172A` |
-| Text Secondary | `#64748B` |
-| Primary | `#2563EB` |
-| Primary Hover | `#1D4ED8` |
-| Accent | `#0EA5E9` |
+| Background | `#F6F8FB` |
+| Surface | `#FFFFFF` |
+| Border | `#D9E1EC` |
+| Text | `#0F172A` |
+| Secondary text | `#64748B` |
+| Primary | `#1D4ED8` |
+| Primary hover | `#1E40AF` |
 | Success | `#16A34A` |
 | Warning | `#F59E0B` |
 | Danger | `#DC2626` |
 
-## CSS Tokens
+## Layout rules
 
-```css
-:root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --border: #e2e8f0;
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --accent: #0ea5e9;
-  --success: #16a34a;
-  --warning: #f59e0b;
-  --danger: #dc2626;
-  --radius: 14px;
-}
-```
+- Desktop uses left sidebar + sticky top header.
+- Mobile uses compact top header + bottom navigation.
+- No large floating action button.
+- Filters use dropdowns and wrap; do not use horizontal scrolling chips.
+- Default file view is list/table. Grid thumbnail view is optional.
 
 ## Components
 
-- Radius: 12px–18px
-- Shadow: soft
-- Border: thin, slate
-- Buttons: primary blue, secondary white + border
-- Icons: Lucide
-- Font: system / Inter-like
+- Buttons: 8px radius, compact height, clear hierarchy.
+- Inputs: 8px radius, subtle border, no heavy shadow.
+- Cards: 8px radius, 1px border, minimal shadow.
+- Tables: readable rows, subtle hover, action buttons aligned right.
+- Upload queue: stable row list with progress bars and status icons.
