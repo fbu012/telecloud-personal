@@ -642,14 +642,10 @@ function CorporateDriveView(props: {
         if (droppedFiles.length) props.onDropFiles(droppedFiles);
       }}
     >
-      <div className="flex flex-col gap-3 border-b border-border bg-white px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <Breadcrumbs breadcrumbs={props.breadcrumbs} onBackToRoot={props.onBackToRoot} onOpenFolder={props.onOpenFolder} />
-          <p className="mt-1 text-sm text-slate-500">Drag files here to upload to the active folder. Drag stored files into folder cards to move them.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={props.onCreateFolder} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><FolderPlus className="h-4 w-4" /> New Folder</button>
-          <button onClick={props.onPickFiles} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]"><UploadCloud className="h-4 w-4" /> Upload Files</button>
+      <div className="border-b border-border bg-white px-4 py-4">
+        <Breadcrumbs breadcrumbs={props.breadcrumbs} onBackToRoot={props.onBackToRoot} onOpenFolder={props.onOpenFolder} />
+        <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Drop files here to upload to this folder. Drag stored files into folder cards to move them.
         </div>
       </div>
 
