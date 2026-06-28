@@ -4,7 +4,10 @@ import {
   Archive,
   BarChart3,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
+  Info,
+  X,
   Cloud,
   Download,
   File as FileIcon,
@@ -195,6 +198,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<StoredFile | null>(null);
+  const [lightboxFileId, setLightboxFileId] = useState<string | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
@@ -231,6 +235,10 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     const timer = window.setTimeout(() => refresh(), 250);
     return () => window.clearTimeout(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    if (view !== 'photos') setLightboxFileId(null);
+  }, [view]);
 
   async function doLogout() {
     await logout();
@@ -349,6 +357,15 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     return sortFiles(byView, sortMode);
   }, [files, sortMode, view]);
 
+  const mediaLightboxFiles = useMemo(
+    () => visibleFiles.filter((file) => ['image', 'video'].includes(getTypeGroup(file.mime_type))),
+    [visibleFiles],
+  );
+  const lightboxFile = useMemo(
+    () => mediaLightboxFiles.find((file) => file.id === lightboxFileId) || null,
+    [lightboxFileId, mediaLightboxFiles],
+  );
+
   const title = view === 'drive' ? 'My Files' : view === 'photos' ? 'Media' : view === 'favorites' ? 'Starred' : view === 'uploads' ? 'Upload Queue' : 'Settings';
 
   return (
@@ -428,10 +445,10 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onLayoutChange={setLayoutMode}
                 onSortChange={setSortMode}
                 onTypeFilterChange={setTypeFilter}
-                onPickFiles={handlePickFiles}
                 onDelete={removeFile}
                 onFavorite={toggleFavorite}
                 onSelect={setSelected}
+                onPreview={view === 'photos' ? (file) => setLightboxFileId(file.id) : undefined}
                 setDraggingFileId={setDraggingFileId}
               />
             )}
@@ -440,6 +457,32 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
       </div>
 
       <MobileBottomNav view={view} setView={setView} />
+
+      {lightboxFile && view === 'photos' && (
+        <MediaLightbox
+          files={mediaLightboxFiles}
+          file={lightboxFile}
+          onClose={() => setLightboxFileId(null)}
+          onNext={() => {
+            if (!mediaLightboxFiles.length) return;
+            const index = mediaLightboxFiles.findIndex((item) => item.id === lightboxFile.id);
+            const next = mediaLightboxFiles[(index + 1) % mediaLightboxFiles.length];
+            if (next) setLightboxFileId(next.id);
+          }}
+          onPrev={() => {
+            if (!mediaLightboxFiles.length) return;
+            const index = mediaLightboxFiles.findIndex((item) => item.id === lightboxFile.id);
+            const prev = mediaLightboxFiles[(index - 1 + mediaLightboxFiles.length) % mediaLightboxFiles.length];
+            if (prev) setLightboxFileId(prev.id);
+          }}
+          onDetails={(file) => {
+            setLightboxFileId(null);
+            setSelected(file);
+          }}
+          onFavorite={toggleFavorite}
+          onDelete={removeFile}
+        />
+      )}
 
       {selected && (
         <FileDrawer
@@ -518,6 +561,10 @@ function TopHeader({
   onRefresh: () => void;
   onLogout: () => void;
 }) {
+  const canCreateFolder = view === 'drive';
+  const canUpload = view === 'drive' || view === 'photos';
+  const canRefresh = view !== 'settings';
+
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-white/95 backdrop-blur">
       <div className="mx-auto max-w-[1500px] px-3 py-3 lg:px-6">
@@ -543,17 +590,21 @@ function TopHeader({
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              {view === 'drive' && (
+              {canCreateFolder && (
                 <button onClick={onNewFolder} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   <FolderPlus className="h-4 w-4" /> New Folder
                 </button>
               )}
-              <button onClick={onUpload} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">
-                <UploadCloud className="h-4 w-4" /> Upload
-              </button>
-              <button onClick={onRefresh} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                <RefreshCcw className="h-4 w-4" /> Refresh
-              </button>
+              {canUpload && (
+                <button onClick={onUpload} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">
+                  <UploadCloud className="h-4 w-4" /> Upload
+                </button>
+              )}
+              {canRefresh && (
+                <button onClick={onRefresh} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                  <RefreshCcw className="h-4 w-4" /> Refresh
+                </button>
+              )}
               <button onClick={onLogout} className="hidden rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 lg:inline-flex">
                 <LogOut className="h-4 w-4" />
               </button>
@@ -674,10 +725,10 @@ function CorporateCollectionView({
   onLayoutChange,
   onSortChange,
   onTypeFilterChange,
-  onPickFiles,
   onDelete,
   onFavorite,
   onSelect,
+  onPreview,
   setDraggingFileId,
 }: {
   title: string;
@@ -690,28 +741,29 @@ function CorporateCollectionView({
   onLayoutChange: (mode: LayoutMode) => void;
   onSortChange: (sort: SortMode) => void;
   onTypeFilterChange: (type: string) => void;
-  onPickFiles: () => void;
   onDelete: (file: StoredFile) => void;
   onFavorite: (file: StoredFile) => void;
   onSelect: (file: StoredFile) => void;
+  onPreview?: (file: StoredFile) => void;
   setDraggingFileId: (id: string | null) => void;
 }) {
+  const openFile = view === 'photos' && onPreview ? onPreview : onSelect;
+  const detailAction = view === 'photos' ? onSelect : undefined;
   const description = view === 'photos' ? 'Images and videos stored in Telegram channel.' : 'Files marked as starred.';
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-border px-4 py-4 md:flex-row md:items-center md:justify-between">
+      <div className="border-b border-border px-4 py-4">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
           <p className="text-sm text-slate-500">{description}</p>
         </div>
-        <button onClick={onPickFiles} className="inline-flex w-fit items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]"><UploadCloud className="h-4 w-4" /> Upload</button>
       </div>
       <Toolbar layoutMode={layoutMode} sortMode={sortMode} typeFilter={typeFilter} onLayoutChange={onLayoutChange} onSortChange={onSortChange} onTypeFilterChange={onTypeFilterChange} />
       <div className="p-4">
         {loading ? <LoadingState /> : layoutMode === 'grid' ? (
-          <GridFiles files={files} onSelect={onSelect} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
+          <GridFiles files={files} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
         ) : (
-          <FilesTable files={files} onSelect={onSelect} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
+          <FilesTable files={files} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
         )}
       </div>
     </div>
@@ -763,7 +815,7 @@ function FolderSection({ folders, onOpenFolder, onMoveFile, draggingFileId }: { 
   );
 }
 
-function FilesTable({ files, onSelect, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
+function FilesTable({ files, onSelect, onDetails, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
   if (!files.length) return <EmptyState />;
   return (
     <div className="overflow-hidden rounded-lg border border-border">
@@ -794,7 +846,7 @@ function FilesTable({ files, onSelect, onFavorite, onDelete, setDraggingFileId }
                 <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
                 <td className="hidden px-4 py-3 text-slate-600 xl:table-cell">{formatDate(file.created_at)}</td>
                 <td className="px-4 py-3">
-                  <RowActions file={file} onFavorite={onFavorite} onDelete={onDelete} />
+                  <RowActions file={file} onDetails={onDetails} onFavorite={onFavorite} onDelete={onDelete} />
                 </td>
               </tr>
             ))}
@@ -805,7 +857,7 @@ function FilesTable({ files, onSelect, onFavorite, onDelete, setDraggingFileId }
   );
 }
 
-function GridFiles({ files, onSelect, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
+function GridFiles({ files, onSelect, onDetails, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
   if (!files.length) return <EmptyState />;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
@@ -819,7 +871,7 @@ function GridFiles({ files, onSelect, onFavorite, onDelete, setDraggingFileId }:
             <p className="mt-1 text-xs text-slate-500">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
             <div className="mt-3 flex items-center justify-between">
               <span className="text-xs text-slate-400">{formatDate(file.created_at)}</span>
-              <RowActions file={file} onFavorite={onFavorite} onDelete={onDelete} compact />
+              <RowActions file={file} onDetails={onDetails} onFavorite={onFavorite} onDelete={onDelete} compact />
             </div>
           </div>
         </div>
@@ -828,10 +880,133 @@ function GridFiles({ files, onSelect, onFavorite, onDelete, setDraggingFileId }:
   );
 }
 
-function RowActions({ file, onFavorite, onDelete, compact = false }: { file: StoredFile; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; compact?: boolean }) {
+
+function MediaLightbox({
+  files,
+  file,
+  onClose,
+  onNext,
+  onPrev,
+  onDetails,
+  onFavorite,
+  onDelete,
+}: {
+  files: StoredFile[];
+  file: StoredFile;
+  onClose: () => void;
+  onNext: () => void;
+  onPrev: () => void;
+  onDetails: (file: StoredFile) => void;
+  onFavorite: (file: StoredFile) => void;
+  onDelete: (file: StoredFile) => void;
+}) {
+  const [showDetails, setShowDetails] = useState(false);
+  const group = getTypeGroup(file.mime_type);
+  const currentIndex = files.findIndex((item) => item.id === file.id);
+  const canNavigate = files.length > 1;
+
+  useEffect(() => {
+    setShowDetails(false);
+  }, [file.id]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+      if (event.key === 'ArrowRight' && canNavigate) onNext();
+      if (event.key === 'ArrowLeft' && canNavigate) onPrev();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canNavigate, onClose, onNext, onPrev]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/90 text-white" onClick={onClose}>
+      <div className="flex h-full flex-col" onClick={(event) => event.stopPropagation()}>
+        <header className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-3 md:px-5">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold md:text-base">{file.original_name}</p>
+            <p className="text-xs text-slate-300">{currentIndex + 1} of {files.length} · {typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button onClick={() => onFavorite(file)} className={cx('inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10', file.is_favorite && 'text-amber-300')} title="Starred">
+              <Star className={cx('h-4 w-4', file.is_favorite && 'fill-current')} />
+            </button>
+            <a href={getDownloadUrl(file.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10" title="Download">
+              <Download className="h-4 w-4" />
+            </a>
+            <button onClick={() => setShowDetails((value) => !value)} className={cx('inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10', showDetails && 'bg-white/10')} title="Details">
+              <Info className="h-4 w-4" />
+            </button>
+            <button onClick={onClose} className="inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10" title="Close">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </header>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_auto]">
+          <div className="relative flex min-h-0 items-center justify-center p-3 md:p-6">
+            {canNavigate && (
+              <button onClick={onPrev} className="absolute left-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg bg-white/10 text-white backdrop-blur hover:bg-white/20 md:left-5" title="Previous">
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+            )}
+
+            <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-black/30">
+              {group === 'video' ? (
+                <video src={getPreviewUrl(file.id)} controls className="max-h-full max-w-full rounded-lg" />
+              ) : (
+                <img src={getPreviewUrl(file.id)} alt={file.original_name} className="max-h-full max-w-full rounded-lg object-contain" />
+              )}
+            </div>
+
+            {canNavigate && (
+              <button onClick={onNext} className="absolute right-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg bg-white/10 text-white backdrop-blur hover:bg-white/20 md:right-5" title="Next">
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            )}
+          </div>
+
+          {showDetails && (
+            <aside className="w-full border-t border-white/10 bg-slate-900 p-4 md:h-full md:w-80 md:border-l md:border-t-0">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-semibold">Details</h3>
+                <button onClick={() => setShowDetails(false)} className="rounded-lg p-1.5 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="mt-4 space-y-3 text-sm">
+                <LightboxMeta label="Name" value={file.original_name} />
+                <LightboxMeta label="Type" value={file.mime_type} />
+                <LightboxMeta label="Size" value={formatBytes(file.size_bytes)} />
+                <LightboxMeta label="Uploaded" value={formatDate(file.created_at)} />
+              </div>
+              <div className="mt-5 grid gap-2">
+                <button onClick={() => onDetails(file)} className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100">Open full details</button>
+                <a href={getDownloadUrl(file.id)} className="rounded-lg border border-white/15 px-3 py-2 text-center text-sm font-medium text-white hover:bg-white/10">Download</a>
+                <button onClick={() => onFavorite(file)} className="rounded-lg border border-white/15 px-3 py-2 text-sm font-medium text-white hover:bg-white/10">{file.is_favorite ? 'Unstar' : 'Star'}</button>
+                <button onClick={() => onDelete(file)} className="rounded-lg border border-red-400/40 px-3 py-2 text-sm font-medium text-red-200 hover:bg-red-500/10">Delete</button>
+              </div>
+              <p className="mt-4 text-xs leading-5 text-slate-400">Use the full details panel to rename files or move them to another folder.</p>
+            </aside>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LightboxMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 break-words text-slate-100">{value}</p>
+    </div>
+  );
+}
+
+function RowActions({ file, onDetails, onFavorite, onDelete, compact = false }: { file: StoredFile; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; compact?: boolean }) {
   const buttonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900';
   return (
     <div className="flex justify-end gap-1">
+      {onDetails && <button onClick={() => onDetails(file)} className={buttonClass} title="Details"><Info className="h-4 w-4" /></button>}
       <button onClick={() => onFavorite(file)} className={cx(buttonClass, file.is_favorite && 'text-amber-600 hover:text-amber-700')} title="Starred"><Star className={cx('h-4 w-4', file.is_favorite && 'fill-current')} /></button>
       <a href={getDownloadUrl(file.id)} className={buttonClass} title="Download"><Download className="h-4 w-4" /></a>
       {!compact && <button onClick={() => onDelete(file)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-4 w-4" /></button>}
@@ -1104,7 +1279,7 @@ function EmptyState() {
     <div className="flex min-h-[260px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
       <FileIcon className="h-10 w-10 text-slate-400" />
       <h3 className="mt-3 font-semibold text-slate-950">No files found</h3>
-      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Upload files or adjust the current filters to show more results.</p>
+      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Adjust the current filters or upload from the main toolbar when available.</p>
     </div>
   );
 }
