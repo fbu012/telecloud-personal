@@ -139,3 +139,17 @@ export function getDownloadUrl(id: string): string {
 export function getPreviewUrl(id: string): string {
   return `/api/files/download?id=${encodeURIComponent(id)}&disposition=inline`;
 }
+export async function bulkFileAction(
+  action: 'move' | 'delete' | 'copy',
+  ids: string[],
+  options: { folder_id?: string | null } = {},
+): Promise<{ files?: StoredFile[]; count: number }> {
+  const response = await fetch('/api/files/bulk', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action, ids, folder_id: options.folder_id ?? null }),
+  });
+  const data = await parseJson<{ ok: true; files?: StoredFile[]; count: number }>(response);
+  return data;
+}

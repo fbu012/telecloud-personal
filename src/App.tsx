@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import {
   ApiError,
+  bulkFileAction,
   createFolder,
   deleteFile,
   getDownloadUrl,
@@ -202,6 +203,9 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkTargetFolderId, setBulkTargetFolderId] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const maxBytes = useMemo(() => Math.round((settings?.max_file_size_mb || 20) * 1024 * 1024), [settings]);
@@ -343,6 +347,33 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     }
   }
 
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  }
+
+  function toggleSelectAll(checked: boolean) {
+    setSelectedIds(checked ? visibleFiles.map((file) => file.id) : []);
+  }
+
+  async function runBulkAction(action: 'move' | 'delete' | 'copy') {
+    if (!selectedIds.length) return;
+    if (action === 'delete' && !window.confirm(`Move ${selectedIds.length} selected files to trash?`)) return;
+    setBulkBusy(true);
+    try {
+      const folderId = bulkTargetFolderId || null;
+      const result = await bulkFileAction(action, selectedIds, { folder_id: folderId });
+      await refresh();
+      setSelectedIds([]);
+      if (action === 'delete') setNotice(`${result.count} file(s) moved to trash`);
+      if (action === 'move') setNotice(`${result.count} file(s) moved to ${folderId ? folders.find((folder) => folder.id === folderId)?.name || 'folder' : 'Root'}`);
+      if (action === 'copy') setNotice(`${result.count} file(s) copied`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Bulk action failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
     if (event.target.files?.length) addFiles(event.target.files, view === 'drive' ? currentFolderId : null);
     event.target.value = '';
@@ -365,6 +396,15 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     () => mediaLightboxFiles.find((file) => file.id === lightboxFileId) || null,
     [lightboxFileId, mediaLightboxFiles],
   );
+  const selectedFiles = useMemo(() => visibleFiles.filter((file) => selectedIds.includes(file.id)), [selectedIds, visibleFiles]);
+
+  useEffect(() => {
+    setSelectedIds((prev) => prev.filter((id) => visibleFiles.some((file) => file.id === id)));
+  }, [visibleFiles]);
+
+  useEffect(() => {
+    setBulkTargetFolderId(view === 'drive' ? currentFolderId || '' : '');
+  }, [view, currentFolderId]);
 
   const title = view === 'drive' ? 'My Files' : view === 'photos' ? 'Media' : view === 'favorites' ? 'Starred' : view === 'uploads' ? 'Upload Queue' : 'Settings';
 
@@ -432,6 +472,18 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onDeleteFile={removeFile}
                 onFavorite={toggleFavorite}
                 onSelect={setSelected}
+                allFolders={folders}
+                selectedIds={selectedIds}
+                selectedCount={selectedFiles.length}
+                bulkTargetFolderId={bulkTargetFolderId}
+                bulkBusy={bulkBusy}
+                onBulkTargetFolderChange={setBulkTargetFolderId}
+                onToggleSelected={toggleSelected}
+                onToggleSelectAll={toggleSelectAll}
+                onClearSelection={() => setSelectedIds([])}
+                onBulkDelete={() => runBulkAction('delete')}
+                onBulkMove={() => runBulkAction('move')}
+                onBulkCopy={() => runBulkAction('copy')}
               />
             ) : (
               <CorporateCollectionView
@@ -450,6 +502,18 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onSelect={setSelected}
                 onPreview={view === 'photos' ? (file) => setLightboxFileId(file.id) : undefined}
                 setDraggingFileId={setDraggingFileId}
+                folders={folders}
+                selectedIds={selectedIds}
+                selectedCount={selectedFiles.length}
+                bulkTargetFolderId={bulkTargetFolderId}
+                bulkBusy={bulkBusy}
+                onBulkTargetFolderChange={setBulkTargetFolderId}
+                onToggleSelected={toggleSelected}
+                onToggleSelectAll={toggleSelectAll}
+                onClearSelection={() => setSelectedIds([])}
+                onBulkDelete={() => runBulkAction('delete')}
+                onBulkMove={() => runBulkAction('move')}
+                onBulkCopy={() => runBulkAction('copy')}
               />
             )}
           </div>
@@ -568,47 +632,63 @@ function TopHeader({
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-white/95 backdrop-blur">
       <div className="mx-auto max-w-[1500px] px-3 py-3 lg:px-6">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 lg:hidden">{appName}</p>
-              <h1 className="truncate text-lg font-semibold tracking-tight text-slate-950 lg:text-xl">{title}</h1>
-            </div>
-            <button onClick={onLogout} className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 lg:hidden">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 lg:hidden">{appName}</p>
+            <h1 className="truncate text-lg font-semibold tracking-tight text-slate-950 lg:text-xl">{title}</h1>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 lg:hidden">
+            {canCreateFolder && (
+              <button onClick={onNewFolder} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50" aria-label="New Folder" title="New Folder">
+                <FolderPlus className="h-4 w-4" />
+              </button>
+            )}
+            {canUpload && (
+              <button onClick={onUpload} className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-white hover:bg-[#1e40af]" aria-label="Upload" title="Upload">
+                <UploadCloud className="h-4 w-4" />
+              </button>
+            )}
+            {canRefresh && (
+              <button onClick={onRefresh} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50" aria-label="Refresh" title="Refresh">
+                <RefreshCcw className="h-4 w-4" />
+              </button>
+            )}
+            <button onClick={onLogout} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-slate-600 hover:bg-slate-50" aria-label="Logout" title="Logout">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
+        </div>
 
-          <div className="flex flex-col gap-2 md:flex-row md:items-center xl:min-w-[720px]">
-            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2">
-              <Search className="h-4 w-4 shrink-0 text-slate-500" />
-              <input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search files, folders, or media"
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {canCreateFolder && (
-                <button onClick={onNewFolder} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                  <FolderPlus className="h-4 w-4" /> New Folder
-                </button>
-              )}
-              {canUpload && (
-                <button onClick={onUpload} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">
-                  <UploadCloud className="h-4 w-4" /> Upload
-                </button>
-              )}
-              {canRefresh && (
-                <button onClick={onRefresh} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                  <RefreshCcw className="h-4 w-4" /> Refresh
-                </button>
-              )}
-              <button onClick={onLogout} className="hidden rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 lg:inline-flex">
-                <LogOut className="h-4 w-4" />
+        <div className="mt-3 flex flex-col gap-2 lg:flex-row lg:items-center xl:min-w-[720px]">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-slate-50 px-3 py-2">
+            <Search className="h-4 w-4 shrink-0 text-slate-500" />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search files, folders, or media"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
+            />
+          </div>
+          <div className="hidden flex-wrap gap-2 lg:flex">
+            {canCreateFolder && (
+              <button onClick={onNewFolder} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                <FolderPlus className="h-4 w-4" /> New Folder
               </button>
-            </div>
+            )}
+            {canUpload && (
+              <button onClick={onUpload} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">
+                <UploadCloud className="h-4 w-4" /> Upload
+              </button>
+            )}
+            {canRefresh && (
+              <button onClick={onRefresh} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                <RefreshCcw className="h-4 w-4" /> Refresh
+              </button>
+            )}
+            <button onClick={onLogout} className="inline-flex rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -663,6 +743,7 @@ function Toolbar({
 function CorporateDriveView(props: {
   files: StoredFile[];
   folders: FolderItem[];
+  allFolders: FolderItem[];
   breadcrumbs: FolderItem[];
   loading: boolean;
   layoutMode: LayoutMode;
@@ -682,6 +763,17 @@ function CorporateDriveView(props: {
   onDeleteFile: (file: StoredFile) => void;
   onFavorite: (file: StoredFile) => void;
   onSelect: (file: StoredFile) => void;
+  selectedIds: string[];
+  selectedCount: number;
+  bulkTargetFolderId: string;
+  bulkBusy: boolean;
+  onBulkTargetFolderChange: (value: string) => void;
+  onToggleSelected: (id: string) => void;
+  onToggleSelectAll: (checked: boolean) => void;
+  onClearSelection: () => void;
+  onBulkDelete: () => void;
+  onBulkMove: () => void;
+  onBulkCopy: () => void;
 }) {
   return (
     <div
@@ -707,7 +799,7 @@ function CorporateDriveView(props: {
         {props.loading ? <LoadingState /> : props.layoutMode === 'grid' ? (
           <GridFiles files={props.files} onSelect={props.onSelect} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
         ) : (
-          <FilesTable files={props.files} onSelect={props.onSelect} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} />
+          <FilesTable files={props.files} folders={props.allFolders} onSelect={props.onSelect} onFavorite={props.onFavorite} onDelete={props.onDeleteFile} setDraggingFileId={props.setDraggingFileId} selectedIds={props.selectedIds} selectedCount={props.selectedCount} bulkTargetFolderId={props.bulkTargetFolderId} bulkBusy={props.bulkBusy} onBulkTargetFolderChange={props.onBulkTargetFolderChange} onToggleSelected={props.onToggleSelected} onToggleSelectAll={props.onToggleSelectAll} onClearSelection={props.onClearSelection} onBulkDelete={props.onBulkDelete} onBulkMove={props.onBulkMove} onBulkCopy={props.onBulkCopy} />
         )}
       </div>
     </div>
@@ -730,6 +822,18 @@ function CorporateCollectionView({
   onSelect,
   onPreview,
   setDraggingFileId,
+  folders,
+  selectedIds,
+  selectedCount,
+  bulkTargetFolderId,
+  bulkBusy,
+  onBulkTargetFolderChange,
+  onToggleSelected,
+  onToggleSelectAll,
+  onClearSelection,
+  onBulkDelete,
+  onBulkMove,
+  onBulkCopy,
 }: {
   title: string;
   view: ViewMode;
@@ -746,6 +850,18 @@ function CorporateCollectionView({
   onSelect: (file: StoredFile) => void;
   onPreview?: (file: StoredFile) => void;
   setDraggingFileId: (id: string | null) => void;
+  folders: FolderItem[];
+  selectedIds: string[];
+  selectedCount: number;
+  bulkTargetFolderId: string;
+  bulkBusy: boolean;
+  onBulkTargetFolderChange: (value: string) => void;
+  onToggleSelected: (id: string) => void;
+  onToggleSelectAll: (checked: boolean) => void;
+  onClearSelection: () => void;
+  onBulkDelete: () => void;
+  onBulkMove: () => void;
+  onBulkCopy: () => void;
 }) {
   const openFile = view === 'photos' && onPreview ? onPreview : onSelect;
   const detailAction = view === 'photos' ? onSelect : undefined;
@@ -763,7 +879,7 @@ function CorporateCollectionView({
         {loading ? <LoadingState /> : layoutMode === 'grid' ? (
           <GridFiles files={files} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
         ) : (
-          <FilesTable files={files} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} />
+          <FilesTable files={files} folders={folders} onSelect={openFile} onDetails={detailAction} onFavorite={onFavorite} onDelete={onDelete} setDraggingFileId={setDraggingFileId} selectedIds={selectedIds} selectedCount={selectedCount} bulkTargetFolderId={bulkTargetFolderId} bulkBusy={bulkBusy} onBulkTargetFolderChange={onBulkTargetFolderChange} onToggleSelected={onToggleSelected} onToggleSelectAll={onToggleSelectAll} onClearSelection={onClearSelection} onBulkDelete={onBulkDelete} onBulkMove={onBulkMove} onBulkCopy={onBulkCopy} />
         )}
       </div>
     </div>
@@ -815,14 +931,91 @@ function FolderSection({ folders, onOpenFolder, onMoveFile, draggingFileId }: { 
   );
 }
 
-function FilesTable({ files, onSelect, onDetails, onFavorite, onDelete, setDraggingFileId }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onDetails?: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void; setDraggingFileId: (id: string | null) => void }) {
+function FilesTable({
+  files,
+  folders,
+  onSelect,
+  onDetails,
+  onFavorite,
+  onDelete,
+  setDraggingFileId,
+  selectedIds,
+  selectedCount,
+  bulkTargetFolderId,
+  bulkBusy,
+  onBulkTargetFolderChange,
+  onToggleSelected,
+  onToggleSelectAll,
+  onClearSelection,
+  onBulkDelete,
+  onBulkMove,
+  onBulkCopy,
+}: {
+  files: StoredFile[];
+  folders: FolderItem[];
+  onSelect: (file: StoredFile) => void;
+  onDetails?: (file: StoredFile) => void;
+  onFavorite: (file: StoredFile) => void;
+  onDelete: (file: StoredFile) => void;
+  setDraggingFileId: (id: string | null) => void;
+  selectedIds: string[];
+  selectedCount: number;
+  bulkTargetFolderId: string;
+  bulkBusy: boolean;
+  onBulkTargetFolderChange: (value: string) => void;
+  onToggleSelected: (id: string) => void;
+  onToggleSelectAll: (checked: boolean) => void;
+  onClearSelection: () => void;
+  onBulkDelete: () => void;
+  onBulkMove: () => void;
+  onBulkCopy: () => void;
+}) {
   if (!files.length) return <EmptyState />;
+  const allSelected = files.length > 0 && selectedIds.length === files.length;
+  const someSelected = selectedIds.length > 0 && !allSelected;
+
   return (
     <div className="overflow-hidden rounded-lg border border-border">
+      {selectedCount > 0 && (
+        <div className="flex flex-col gap-3 border-b border-border bg-blue-50 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-950">{selectedCount} selected</p>
+            <p className="text-xs text-slate-500">Bulk actions are available for the selected files.</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <select
+              value={bulkTargetFolderId}
+              onChange={(event) => onBulkTargetFolderChange(event.target.value)}
+              className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+            >
+              <option value="">Root</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>{folder.name}</option>
+              ))}
+            </select>
+            <button onClick={onBulkMove} disabled={bulkBusy} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">Move</button>
+            <button onClick={onBulkCopy} disabled={bulkBusy} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">Copy</button>
+            <button onClick={onBulkDelete} disabled={bulkBusy} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Delete</button>
+            <button onClick={onClearSelection} disabled={bulkBusy} className="rounded-lg border border-transparent px-3 py-2 text-sm font-medium text-slate-500 hover:bg-white disabled:opacity-50">Clear</button>
+          </div>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-border text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
+              <th className="w-12 px-4 py-3 font-semibold">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSelected;
+                  }}
+                  onChange={(event) => onToggleSelectAll(event.target.checked)}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                  aria-label="Select all"
+                />
+              </th>
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="hidden px-4 py-3 font-semibold md:table-cell">Type</th>
               <th className="hidden px-4 py-3 font-semibold md:table-cell">Size</th>
@@ -831,25 +1024,37 @@ function FilesTable({ files, onSelect, onDetails, onFavorite, onDelete, setDragg
             </tr>
           </thead>
           <tbody className="divide-y divide-border bg-white">
-            {files.map((file) => (
-              <tr key={file.id} draggable onDragStart={() => setDraggingFileId(file.id)} onDragEnd={() => setDraggingFileId(null)} className="hover:bg-slate-50">
-                <td className="max-w-[420px] px-4 py-3">
-                  <button onClick={() => onSelect(file)} className="flex min-w-0 items-center gap-3 text-left">
-                    <FileThumb file={file} size="sm" />
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium text-slate-950">{file.original_name}</span>
-                      <span className="block truncate text-xs text-slate-500 md:hidden">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</span>
-                    </span>
-                  </button>
-                </td>
-                <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{typeLabel(file.mime_type)}</td>
-                <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
-                <td className="hidden px-4 py-3 text-slate-600 xl:table-cell">{formatDate(file.created_at)}</td>
-                <td className="px-4 py-3">
-                  <RowActions file={file} onDetails={onDetails} onFavorite={onFavorite} onDelete={onDelete} />
-                </td>
-              </tr>
-            ))}
+            {files.map((file) => {
+              const isSelected = selectedIds.includes(file.id);
+              return (
+                <tr key={file.id} draggable onDragStart={() => setDraggingFileId(file.id)} onDragEnd={() => setDraggingFileId(null)} className={cx(isSelected ? 'bg-blue-50/50' : 'hover:bg-slate-50')}>
+                  <td className="px-4 py-3 align-middle">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggleSelected(file.id)}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      aria-label={`Select ${file.original_name}`}
+                    />
+                  </td>
+                  <td className="max-w-[420px] px-4 py-3">
+                    <button onClick={() => onSelect(file)} className="flex min-w-0 items-center gap-3 text-left">
+                      <FileThumb file={file} size="sm" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-slate-950">{file.original_name}</span>
+                        <span className="block truncate text-xs text-slate-500 md:hidden">{typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</span>
+                      </span>
+                    </button>
+                  </td>
+                  <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{typeLabel(file.mime_type)}</td>
+                  <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
+                  <td className="hidden px-4 py-3 text-slate-600 xl:table-cell">{formatDate(file.created_at)}</td>
+                  <td className="px-4 py-3">
+                    <RowActions file={file} onDetails={onDetails} onFavorite={onFavorite} onDelete={onDelete} />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -920,71 +1125,75 @@ function MediaLightbox({
   }, [canNavigate, onClose, onNext, onPrev]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/90 text-white" onClick={onClose}>
-      <div className="flex h-full flex-col" onClick={(event) => event.stopPropagation()}>
-        <header className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-3 md:px-5">
+    <div className="fixed inset-0 z-50 bg-slate-950/45 p-3 text-slate-950 backdrop-blur-sm md:p-6" onClick={onClose}>
+      <div className="mx-auto flex h-full max-w-7xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <header className="flex items-center justify-between gap-3 border-b border-border bg-white px-3 py-3 md:px-5">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold md:text-base">{file.original_name}</p>
-            <p className="text-xs text-slate-300">{currentIndex + 1} of {files.length} · {typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
+            <p className="truncate text-sm font-semibold text-slate-950 md:text-base">{file.original_name}</p>
+            <p className="text-xs text-slate-500">{currentIndex + 1} of {files.length} · {typeLabel(file.mime_type)} · {formatBytes(file.size_bytes)}</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button onClick={() => onFavorite(file)} className={cx('inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10', file.is_favorite && 'text-amber-300')} title="Starred">
+            <button onClick={() => onFavorite(file)} className={cx('inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950', file.is_favorite && 'text-amber-500')} title="Starred">
               <Star className={cx('h-4 w-4', file.is_favorite && 'fill-current')} />
             </button>
-            <a href={getDownloadUrl(file.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10" title="Download">
+            <a href={getDownloadUrl(file.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950" title="Download">
               <Download className="h-4 w-4" />
             </a>
-            <button onClick={() => setShowDetails((value) => !value)} className={cx('inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10', showDetails && 'bg-white/10')} title="Details">
+            <button onClick={() => setShowDetails((value) => !value)} className={cx('inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950', showDetails && 'bg-blue-50 text-primary')} title="Details">
               <Info className="h-4 w-4" />
             </button>
-            <button onClick={onClose} className="inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10" title="Close">
+            <button onClick={onClose} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950" title="Close">
               <X className="h-5 w-5" />
             </button>
           </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_auto]">
+        <div className="grid min-h-0 flex-1 grid-cols-1 bg-slate-50 md:grid-cols-[1fr_auto]">
           <div className="relative flex min-h-0 items-center justify-center p-3 md:p-6">
             {canNavigate && (
-              <button onClick={onPrev} className="absolute left-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg bg-white/10 text-white backdrop-blur hover:bg-white/20 md:left-5" title="Previous">
+              <button onClick={onPrev} className="absolute left-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg border border-slate-200 bg-white/95 text-slate-700 shadow-sm backdrop-blur hover:bg-slate-100 md:left-5" title="Previous">
                 <ChevronLeft className="h-6 w-6" />
               </button>
             )}
 
-            <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-black/30">
+            <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent">
               {group === 'video' ? (
-                <video src={getPreviewUrl(file.id)} controls className="max-h-full max-w-full rounded-lg" />
+                <video src={getPreviewUrl(file.id)} controls className="max-h-full max-w-full rounded-lg shadow-sm" />
               ) : (
-                <img src={getPreviewUrl(file.id)} alt={file.original_name} className="max-h-full max-w-full rounded-lg object-contain" />
+                <img src={getPreviewUrl(file.id)} alt={file.original_name} className="max-h-full max-w-full rounded-lg object-contain shadow-sm" />
               )}
             </div>
 
             {canNavigate && (
-              <button onClick={onNext} className="absolute right-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg bg-white/10 text-white backdrop-blur hover:bg-white/20 md:right-5" title="Next">
+              <button onClick={onNext} className="absolute right-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg border border-slate-200 bg-white/95 text-slate-700 shadow-sm backdrop-blur hover:bg-slate-100 md:right-5" title="Next">
                 <ChevronRight className="h-6 w-6" />
               </button>
             )}
           </div>
 
           {showDetails && (
-            <aside className="w-full border-t border-white/10 bg-slate-900 p-4 md:h-full md:w-80 md:border-l md:border-t-0">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="font-semibold">Details</h3>
-                <button onClick={() => setShowDetails(false)} className="rounded-lg p-1.5 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>
+            <aside className="flex max-h-[44vh] w-full flex-col overflow-hidden border-t border-border bg-white md:h-full md:max-h-none md:w-80 md:border-l md:border-t-0">
+              <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-4">
+                <h3 className="font-semibold text-slate-950">Details</h3>
+                <button onClick={() => setShowDetails(false)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-950"><X className="h-4 w-4" /></button>
               </div>
-              <div className="mt-4 space-y-3 text-sm">
-                <LightboxMeta label="Name" value={file.original_name} />
-                <LightboxMeta label="Type" value={file.mime_type} />
-                <LightboxMeta label="Size" value={formatBytes(file.size_bytes)} />
-                <LightboxMeta label="Uploaded" value={formatDate(file.created_at)} />
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                <div className="space-y-3 text-sm">
+                  <LightboxMeta label="Name" value={file.original_name} />
+                  <LightboxMeta label="Type" value={file.mime_type} />
+                  <LightboxMeta label="Size" value={formatBytes(file.size_bytes)} />
+                  <LightboxMeta label="Uploaded" value={formatDate(file.created_at)} />
+                </div>
+                <p className="mt-4 text-xs leading-5 text-slate-500">Use the full details panel to rename files or move them to another folder.</p>
               </div>
-              <div className="mt-5 grid gap-2">
-                <button onClick={() => onDetails(file)} className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-slate-100">Open full details</button>
-                <a href={getDownloadUrl(file.id)} className="rounded-lg border border-white/15 px-3 py-2 text-center text-sm font-medium text-white hover:bg-white/10">Download</a>
-                <button onClick={() => onFavorite(file)} className="rounded-lg border border-white/15 px-3 py-2 text-sm font-medium text-white hover:bg-white/10">{file.is_favorite ? 'Unstar' : 'Star'}</button>
-                <button onClick={() => onDelete(file)} className="rounded-lg border border-red-400/40 px-3 py-2 text-sm font-medium text-red-200 hover:bg-red-500/10">Delete</button>
+              <div className="border-t border-border bg-white px-4 py-4">
+                <div className="grid gap-2">
+                  <button onClick={() => onDetails(file)} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af]">Open full details</button>
+                  <a href={getDownloadUrl(file.id)} className="rounded-lg border border-border px-3 py-2 text-center text-sm font-medium text-slate-700 hover:bg-slate-50">Download</a>
+                  <button onClick={() => onFavorite(file)} className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">{file.is_favorite ? 'Unstar' : 'Star'}</button>
+                  <button onClick={() => onDelete(file)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50">Delete</button>
+                </div>
               </div>
-              <p className="mt-4 text-xs leading-5 text-slate-400">Use the full details panel to rename files or move them to another folder.</p>
             </aside>
           )}
         </div>
@@ -995,9 +1204,9 @@ function MediaLightbox({
 
 function LightboxMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-1 break-words text-slate-100">{value}</p>
+    <div className="rounded-lg border border-border bg-slate-50 p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 break-words text-slate-900">{value}</p>
     </div>
   );
 }
