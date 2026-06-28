@@ -2,6 +2,7 @@ import { json, type Env } from '../_common';
 
 interface FileRow {
   id: string;
+  folder_id: string | null;
   original_name: string;
   mime_type: string;
   size_bytes: number;
@@ -26,10 +27,21 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const q = (url.searchParams.get('q') || '').trim();
   const type = (url.searchParams.get('type') || 'all').trim();
   const favorite = url.searchParams.get('favorite') === 'true';
-  const limit = Math.min(Number(url.searchParams.get('limit') || '80') || 80, 200);
+  const folderId = url.searchParams.get('folder_id');
+  const includeFolderFilter = url.searchParams.has('folder_id');
+  const limit = Math.min(Number(url.searchParams.get('limit') || '200') || 200, 500);
 
   const where: string[] = ['status != ?'];
   const binds: unknown[] = ['trash'];
+
+  if (includeFolderFilter) {
+    if (folderId && folderId !== 'root') {
+      where.push('folder_id = ?');
+      binds.push(folderId);
+    } else {
+      where.push('folder_id IS NULL');
+    }
+  }
 
   if (q) {
     where.push('(original_name LIKE ? OR mime_type LIKE ? OR tags_json LIKE ?)');
@@ -53,14 +65,19 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     .bind(...binds, limit)
     .all<FileRow>();
 
-  const rows = (result.results || []).map((row) => ({
-    ...row,
-    is_favorite: Boolean(row.is_favorite),
-    tags: safeParseTags(row.tags_json),
-  }));
+  const rows = (result.results || []).map(normalizeFile);
 
   return json({ ok: true, files: rows });
 };
+
+function normalizeFile(row: FileRow) {
+  return {
+    ...row,
+    folder_id: row.folder_id || null,
+    is_favorite: Boolean(row.is_favorite),
+    tags: safeParseTags(row.tags_json),
+  };
+}
 
 function safeParseTags(value: string): string[] {
   try {

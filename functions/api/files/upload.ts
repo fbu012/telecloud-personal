@@ -50,6 +50,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   const originalName = sanitizeFileName(incoming.name || 'file');
+  const rawFolderId = form.get('folder_id');
+  const folderId = typeof rawFolderId === 'string' && rawFolderId && rawFolderId !== 'root' ? rawFolderId : null;
+
+  if (folderId) {
+    const folder = await env.DB.prepare('SELECT id FROM folders WHERE id = ? LIMIT 1').bind(folderId).first<{ id: string }>();
+    if (!folder) return errorJson('Folder tujuan tidak ditemukan', 404);
+  }
   const mimeType = incoming.type || 'application/octet-stream';
   const buffer = await incoming.arrayBuffer();
   const checksum = await sha256Hex(buffer);
@@ -91,6 +98,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   await env.DB.prepare(
     `INSERT INTO files (
       id,
+      folder_id,
       original_name,
       mime_type,
       size_bytes,
@@ -107,10 +115,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       notes,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
+      folderId,
       doc.file_name || originalName,
       doc.mime_type || mimeType,
       doc.file_size || incoming.size,
@@ -140,6 +149,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ok: true,
     file: {
       id,
+      folder_id: folderId,
       original_name: doc.file_name || originalName,
       mime_type: doc.mime_type || mimeType,
       size_bytes: doc.file_size || incoming.size,

@@ -1,7 +1,16 @@
 export type ViewMode = 'photos' | 'drive' | 'uploads' | 'favorites' | 'settings';
 
+export interface FolderItem {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StoredFile {
   id: string;
+  folder_id?: string | null;
   original_name: string;
   mime_type: string;
   size_bytes: number;
@@ -26,6 +35,8 @@ export type UploadStatus = 'queued' | 'uploading' | 'uploaded' | 'failed' | 'ret
 export interface UploadItem {
   id: string;
   file: File;
+  folder_id?: string | null;
+  folder_name?: string;
   status: UploadStatus;
   progress: number;
   error?: string;

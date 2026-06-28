@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import {
   Archive,
   CheckCircle2,
+  ChevronRight,
   Cloud,
   Download,
   File as FileIcon,
   Folder,
+  FolderPlus,
   Grid3X3,
   HardDrive,
   Heart,
@@ -26,18 +28,21 @@ import {
 } from 'lucide-react';
 import {
   ApiError,
+  createFolder,
   deleteFile,
   getDownloadUrl,
   getMe,
+  getPreviewUrl,
   getSettings,
   listFiles,
+  listFolders,
   login,
   logout,
   updateFile,
   uploadFile,
 } from './lib/api';
 import { formatBytes, formatDate, getTypeGroup, typeLabel } from './lib/format';
-import type { Settings, StoredFile, UploadItem, ViewMode } from './lib/types';
+import type { FolderItem, Settings, StoredFile, UploadItem, ViewMode } from './lib/types';
 
 const typeFilters = [
   { value: 'all', label: 'All' },
@@ -140,11 +145,7 @@ function LoginScreen({ appName, onLoggedIn }: { appName: string; onLoggedIn: () 
             />
           </div>
 
-          {error && (
-            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+          {error && <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
           <button
             type="submit"
@@ -167,6 +168,7 @@ function LoginScreen({ appName, onLoggedIn }: { appName: string; onLoggedIn: () 
 function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => void }) {
   const [view, setView] = useState<ViewMode>('photos');
   const [files, setFiles] = useState<StoredFile[]>([]);
+  const [folders, setFolders] = useState<FolderItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -174,25 +176,34 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<StoredFile | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const maxBytes = useMemo(() => Math.round((settings?.max_file_size_mb || 20) * 1024 * 1024), [settings]);
+  const currentFolder = useMemo(() => folders.find((folder) => folder.id === currentFolderId) || null, [folders, currentFolderId]);
+  const currentFolderName = currentFolder?.name || 'Root';
+  const childFolders = useMemo(() => folders.filter((folder) => (folder.parent_id || null) === currentFolderId), [folders, currentFolderId]);
+  const breadcrumbs = useMemo(() => buildBreadcrumbs(folders, currentFolderId), [folders, currentFolderId]);
 
   const refresh = useCallback(async () => {
     setLoadingFiles(true);
     try {
-      const [remoteFiles, remoteSettings] = await Promise.all([
-        listFiles({ q: searchQuery, type: typeFilter, favorite: view === 'favorites' }),
+      const useFolderFilter = view === 'drive';
+      const [remoteFiles, remoteFolders, remoteSettings] = await Promise.all([
+        listFiles({ q: searchQuery, type: typeFilter, favorite: view === 'favorites', folder_id: currentFolderId, useFolderFilter }),
+        listFolders().catch(() => []),
         getSettings().catch(() => null),
       ]);
       setFiles(remoteFiles);
+      setFolders(remoteFolders);
       if (remoteSettings) setSettings(remoteSettings);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Gagal memuat data');
     } finally {
       setLoadingFiles(false);
     }
-  }, [searchQuery, typeFilter, view]);
+  }, [currentFolderId, searchQuery, typeFilter, view]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -210,13 +221,16 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     inputRef.current?.click();
   }
 
-  function addFiles(fileList: FileList | File[]) {
+  function addFiles(fileList: FileList | File[], folderId = currentFolderId) {
     const incoming = Array.from(fileList);
+    const folderName = folderId ? folders.find((folder) => folder.id === folderId)?.name || 'Folder' : 'Root';
     const items: UploadItem[] = incoming.map((file) => {
       const tooLarge = file.size > maxBytes;
       return {
         id: crypto.randomUUID(),
         file,
+        folder_id: folderId,
+        folder_name: folderName,
         status: tooLarge ? 'failed' : 'queued',
         progress: 0,
         error: tooLarge ? `Terlalu besar. Maksimal ${formatBytes(maxBytes)}.` : undefined,
@@ -229,7 +243,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   async function processOne(item: UploadItem) {
     setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'uploading', progress: 35, error: undefined } : q)));
     try {
-      const result = await uploadFile(item.file, false);
+      const result = await uploadFile(item.file, false, item.folder_id || null);
       if (result.skipped) {
         setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'skipped', progress: 100 } : q)));
       } else if (result.file) {
@@ -282,6 +296,34 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     }
   }
 
+  async function createFolderInCurrent() {
+    const name = window.prompt('Nama folder baru');
+    if (!name?.trim()) return;
+    try {
+      const folder = await createFolder(name, currentFolderId);
+      setFolders((prev) => [...prev, folder]);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal membuat folder');
+    }
+  }
+
+  async function moveFileToFolder(fileId: string, folderId: string | null) {
+    try {
+      const updated = await updateFile(fileId, { folder_id: folderId });
+      setFiles((prev) => prev.filter((item) => item.id !== updated.id));
+      setNotice(`File dipindahkan ke ${folderId ? folders.find((folder) => folder.id === folderId)?.name || 'folder' : 'Root'}`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal memindahkan file');
+    } finally {
+      setDraggingFileId(null);
+    }
+  }
+
+  function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
+    if (event.target.files?.length) addFiles(event.target.files, view === 'drive' ? currentFolderId : null);
+    event.target.value = '';
+  }
+
   const visibleFiles = useMemo(() => {
     if (view === 'photos') return files.filter((file) => ['image', 'video'].includes(getTypeGroup(file.mime_type)));
     if (view === 'favorites') return files.filter((file) => file.is_favorite);
@@ -290,16 +332,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
 
   return (
     <div className="min-h-screen text-slate-950">
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={(event) => {
-          if (event.target.files) addFiles(event.target.files);
-          event.currentTarget.value = '';
-        }}
-      />
+      <input ref={inputRef} type="file" multiple className="hidden" onChange={handleFileInput} />
 
       <div className="mx-auto flex min-h-screen max-w-[1500px] gap-4 p-3 lg:p-5">
         <aside className="hidden w-64 shrink-0 rounded-[28px] border border-border bg-white/90 p-4 shadow-soft backdrop-blur lg:block">
@@ -312,11 +345,11 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                   key={item.key}
                   onClick={() => setView(item.key)}
                   className={cx(
-                    'flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition',
+                    'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition',
                     view === item.key ? 'bg-primary text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
                   )}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-5 w-5" />
                   {item.label}
                 </button>
               );
@@ -325,9 +358,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
 
           <div className="mt-8 rounded-3xl border border-blue-100 bg-blue-50/70 p-4">
             <p className="text-sm font-semibold text-blue-950">Mode awal</p>
-            <p className="mt-1 text-xs leading-5 text-blue-800">
-              Telegram Bot API biasa · maksimal {settings?.max_file_size_mb || 20} MB/file.
-            </p>
+            <p className="mt-1 text-xs leading-5 text-blue-800">Telegram Bot API biasa · maksimal {settings?.max_file_size_mb || 20} MB/file.</p>
           </div>
         </aside>
 
@@ -339,7 +370,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
               </div>
 
               <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-border bg-slate-50 px-3 py-2.5">
-                <Search className="h-4 w-4 shrink-0 text-slate-400" />
+                <Search className="h-5 w-5 text-slate-400" />
                 <input
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
@@ -358,26 +389,14 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                     <option key={filter.value} value={filter.value}>{filter.label}</option>
                   ))}
                 </select>
-                <button
-                  onClick={handlePickFiles}
-                  className="flex items-center gap-2 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1d4ed8]"
-                >
-                  <UploadCloud className="h-4 w-4" />
-                  Upload
+                <button onClick={handlePickFiles} className="flex items-center gap-2 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1d4ed8]">
+                  <UploadCloud className="h-4 w-4" /> Upload
                 </button>
-                <button
-                  onClick={refresh}
-                  className="rounded-2xl border border-border bg-white p-2.5 text-slate-600 hover:bg-slate-50"
-                  title="Refresh"
-                >
-                  <RefreshCcw className="h-4 w-4" />
+                <button onClick={refresh} className="rounded-2xl border border-border bg-white p-2.5 text-slate-500 hover:bg-slate-50" title="Refresh">
+                  <RefreshCcw className="h-5 w-5" />
                 </button>
-                <button
-                  onClick={doLogout}
-                  className="rounded-2xl border border-border bg-white p-2.5 text-slate-600 hover:bg-slate-50"
-                  title="Logout"
-                >
-                  <LogOut className="h-4 w-4" />
+                <button onClick={doLogout} className="rounded-2xl border border-border bg-white p-2.5 text-slate-500 hover:bg-slate-50" title="Logout">
+                  <LogOut className="h-5 w-5" />
                 </button>
               </div>
             </div>
@@ -389,13 +408,9 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                   <button
                     key={item.key}
                     onClick={() => setView(item.key)}
-                    className={cx(
-                      'flex shrink-0 items-center gap-2 rounded-2xl px-3 py-2 text-xs font-medium',
-                      view === item.key ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600',
-                    )}
+                    className={cx('flex items-center gap-2 rounded-2xl px-3 py-2 text-xs font-semibold', view === item.key ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600')}
                   >
-                    <Icon className="h-3.5 w-3.5" />
-                    {item.label}
+                    <Icon className="h-4 w-4" /> {item.label}
                   </button>
                 );
               })}
@@ -410,28 +425,48 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
           )}
 
           <section className="mt-5">
-            {view === 'settings' ? (
-              <SettingsView settings={settings} />
-            ) : view === 'uploads' ? (
-              <UploadQueueView
+            {view === 'uploads' ? (
+              <UploadQueue
                 items={uploadItems}
                 maxBytes={maxBytes}
                 onPickFiles={handlePickFiles}
                 onStart={startQueue}
                 onRetry={retryFailed}
+                onAddFiles={(filesToAdd) => addFiles(filesToAdd, currentFolderId)}
                 onClearCompleted={() => setUploadItems((prev) => prev.filter((item) => !['uploaded', 'skipped'].includes(item.status)))}
                 onCancelWaiting={() => setUploadItems((prev) => prev.filter((item) => !['queued', 'retrying'].includes(item.status)))}
-                onDropFiles={addFiles}
+              />
+            ) : view === 'settings' ? (
+              <SettingsView settings={settings} />
+            ) : view === 'drive' ? (
+              <DriveView
+                files={visibleFiles}
+                folders={childFolders}
+                allFolders={folders}
+                breadcrumbs={breadcrumbs}
+                currentFolderId={currentFolderId}
+                currentFolderName={currentFolderName}
+                loading={loadingFiles}
+                onPickFiles={handlePickFiles}
+                onDropFiles={(droppedFiles) => addFiles(droppedFiles, currentFolderId)}
+                onCreateFolder={createFolderInCurrent}
+                onOpenFolder={(folderId) => setCurrentFolderId(folderId)}
+                onDeleteFile={removeFile}
+                onFavorite={toggleFavorite}
+                onSelect={setSelected}
+                onMoveFile={moveFileToFolder}
+                draggingFileId={draggingFileId}
+                setDraggingFileId={setDraggingFileId}
               />
             ) : (
-              <FilesView
+              <LibraryView
                 view={view}
                 files={visibleFiles}
                 loading={loadingFiles}
                 onPickFiles={handlePickFiles}
-                onSelect={setSelected}
-                onFavorite={toggleFavorite}
                 onDelete={removeFile}
+                onFavorite={toggleFavorite}
+                onSelect={setSelected}
               />
             )}
           </section>
@@ -441,6 +476,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
       {selected && (
         <FileDrawer
           file={selected}
+          folders={folders}
           onClose={() => setSelected(null)}
           onFavorite={() => toggleFavorite(selected)}
           onDelete={() => removeFile(selected)}
@@ -458,7 +494,7 @@ function Brand({ appName, compact = false }: { appName: string; compact?: boolea
   return (
     <div className="flex items-center gap-3">
       <div className={cx('flex items-center justify-center rounded-2xl bg-primary text-white shadow-sm', compact ? 'h-10 w-10' : 'h-11 w-11')}>
-        <Cloud className="h-5 w-5" />
+        <Cloud className="h-6 w-6" />
       </div>
       <div className="min-w-0">
         <p className="truncate text-sm font-semibold text-slate-950">{appName}</p>
@@ -468,7 +504,7 @@ function Brand({ appName, compact = false }: { appName: string; compact?: boolea
   );
 }
 
-function FilesView({
+function LibraryView({
   view,
   files,
   loading,
@@ -485,8 +521,6 @@ function FilesView({
   onFavorite: (file: StoredFile) => void;
   onDelete: (file: StoredFile) => void;
 }) {
-  const isDrive = view === 'drive';
-
   return (
     <div className="rounded-[28px] border border-border bg-white/85 p-4 shadow-soft backdrop-blur">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -494,19 +528,13 @@ function FilesView({
           <h2 className="text-lg font-semibold text-slate-950">{view === 'photos' ? 'Photos' : view === 'favorites' ? 'Favorites' : 'Drive'}</h2>
           <p className="text-sm text-slate-500">{files.length} file tersimpan</p>
         </div>
-        <button onClick={onPickFiles} className="rounded-2xl border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          Add files
-        </button>
+        <button onClick={onPickFiles} className="rounded-2xl border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Add files</button>
       </div>
 
       {loading ? (
-        <div className="flex min-h-[320px] items-center justify-center text-slate-500">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading files...
-        </div>
+        <div className="flex min-h-[320px] items-center justify-center text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /></div>
       ) : files.length === 0 ? (
         <EmptyState onPickFiles={onPickFiles} />
-      ) : isDrive ? (
-        <DriveTable files={files} onSelect={onSelect} onFavorite={onFavorite} onDelete={onDelete} />
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6">
           {files.map((file) => (
@@ -518,49 +546,181 @@ function FilesView({
   );
 }
 
-function EmptyState({ onPickFiles }: { onPickFiles: () => void }) {
+function DriveView({
+  files,
+  folders,
+  breadcrumbs,
+  currentFolderId,
+  currentFolderName,
+  loading,
+  onPickFiles,
+  onDropFiles,
+  onCreateFolder,
+  onOpenFolder,
+  onSelect,
+  onFavorite,
+  onDeleteFile,
+  onMoveFile,
+  draggingFileId,
+  setDraggingFileId,
+}: {
+  files: StoredFile[];
+  folders: FolderItem[];
+  allFolders: FolderItem[];
+  breadcrumbs: FolderItem[];
+  currentFolderId: string | null;
+  currentFolderName: string;
+  loading: boolean;
+  onPickFiles: () => void;
+  onDropFiles: (files: File[]) => void;
+  onCreateFolder: () => void;
+  onOpenFolder: (folderId: string | null) => void;
+  onSelect: (file: StoredFile) => void;
+  onFavorite: (file: StoredFile) => void;
+  onDeleteFile: (file: StoredFile) => void;
+  onMoveFile: (fileId: string, folderId: string | null) => void;
+  draggingFileId: string | null;
+  setDraggingFileId: (id: string | null) => void;
+}) {
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const droppedFiles = Array.from(event.dataTransfer.files || []);
+    if (droppedFiles.length) onDropFiles(droppedFiles);
+  }
+
   return (
-    <div className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-primary shadow-sm">
-        <UploadCloud className="h-7 w-7" />
+    <div
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+      className="rounded-[28px] border border-border bg-white/85 p-4 shadow-soft backdrop-blur"
+    >
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-1 text-sm text-slate-500">
+            <button
+              onClick={() => onOpenFolder(null)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (draggingFileId) onMoveFile(draggingFileId, null);
+              }}
+              className="rounded-xl px-2 py-1 font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Drive
+            </button>
+            {breadcrumbs.map((folder) => (
+              <span key={folder.id} className="flex items-center gap-1">
+                <ChevronRight className="h-4 w-4" />
+                <button onClick={() => onOpenFolder(folder.id)} className="rounded-xl px-2 py-1 font-medium text-slate-700 hover:bg-slate-100">{folder.name}</button>
+              </span>
+            ))}
+          </div>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">{currentFolderName}</h2>
+          <p className="text-sm text-slate-500">{folders.length} folder · {files.length} file</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onCreateFolder} className="flex items-center gap-2 rounded-2xl border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <FolderPlus className="h-4 w-4" /> New folder
+          </button>
+          <button onClick={onPickFiles} className="rounded-2xl border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Add files</button>
+        </div>
       </div>
-      <h3 className="mt-4 text-base font-semibold text-slate-950">Belum ada file</h3>
-      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">
-        Mulai upload foto, video kecil, dokumen, atau arsip. Bulk upload akan diproses satu per satu agar aman.
-      </p>
-      <button onClick={onPickFiles} className="mt-5 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]">
-        Upload file pertama
+
+      <div className="mb-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-center text-sm text-slate-500">
+        Drag & drop file ke area ini untuk upload ke folder <strong>{currentFolderName}</strong>. Drag file yang sudah ada ke kartu folder untuk memindahkan.
+      </div>
+
+      {loading ? (
+        <div className="flex min-h-[320px] items-center justify-center text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : folders.length === 0 && files.length === 0 ? (
+        <EmptyState onPickFiles={onPickFiles} />
+      ) : (
+        <div className="space-y-5">
+          {folders.length > 0 && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+              {folders.map((folder) => (
+                <FolderCard
+                  key={folder.id}
+                  folder={folder}
+                  onOpen={() => onOpenFolder(folder.id)}
+                  onMoveFile={draggingFileId ? () => onMoveFile(draggingFileId, folder.id) : undefined}
+                />
+              ))}
+            </div>
+          )}
+          {files.length > 0 && (
+            <FileTable
+              files={files}
+              onSelect={onSelect}
+              onFavorite={onFavorite}
+              onDelete={onDeleteFile}
+              onDragStart={setDraggingFileId}
+              onDragEnd={() => setDraggingFileId(null)}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FolderCard({ folder, onOpen, onMoveFile }: { folder: FolderItem; onOpen: () => void; onMoveFile?: () => void }) {
+  return (
+    <div
+      onDragOver={(event) => {
+        if (onMoveFile) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!onMoveFile) return;
+        event.preventDefault();
+        onMoveFile();
+      }}
+      className="group rounded-3xl border border-border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
+    >
+      <button onClick={onOpen} className="flex w-full items-center gap-3 text-left">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-primary">
+          <Folder className="h-6 w-6" />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-slate-950">{folder.name}</span>
+          <span className="block text-xs text-slate-500">Folder</span>
+        </span>
       </button>
     </div>
   );
 }
 
+function EmptyState({ onPickFiles }: { onPickFiles: () => void }) {
+  return (
+    <div className="flex min-h-[320px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-primary shadow-sm"><UploadCloud className="h-7 w-7" /></div>
+      <h3 className="mt-4 text-base font-semibold text-slate-950">Belum ada file</h3>
+      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Upload foto, video, dokumen, atau file lain ke private Telegram channel.</p>
+      <button onClick={onPickFiles} className="mt-5 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]">Upload file</button>
+    </div>
+  );
+}
+
 function FileCard({ file, onSelect, onFavorite, onDelete }: { file: StoredFile; onSelect: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void }) {
-  const TypeIcon = iconForMime(file.mime_type);
+  const isImage = getTypeGroup(file.mime_type) === 'image';
+  const Icon = iconForMime(file.mime_type);
+
   return (
     <div className="group overflow-hidden rounded-3xl border border-border bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft">
-      <button onClick={() => onSelect(file)} className="flex aspect-square w-full items-center justify-center bg-slate-50 text-slate-400 transition group-hover:bg-blue-50 group-hover:text-primary">
-        <TypeIcon className="h-11 w-11" />
+      <button onClick={() => onSelect(file)} className="flex aspect-square w-full items-center justify-center overflow-hidden bg-slate-50 text-slate-400 transition group-hover:bg-blue-50 group-hover:text-primary">
+        {isImage ? <img src={getPreviewUrl(file.id)} alt={file.original_name} className="h-full w-full object-cover" loading="lazy" /> : <Icon className="h-14 w-14" />}
       </button>
       <div className="p-3">
-        <button onClick={() => onSelect(file)} className="block w-full truncate text-left text-sm font-medium text-slate-950" title={file.original_name}>
-          {file.original_name}
-        </button>
+        <button onClick={() => onSelect(file)} className="block w-full truncate text-left text-sm font-medium text-slate-950" title={file.original_name}>{file.original_name}</button>
         <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-500">
           <span>{formatBytes(file.size_bytes)}</span>
           <span>{typeLabel(file.mime_type)}</span>
         </div>
         <div className="mt-3 flex items-center justify-between">
-          <button onClick={() => onFavorite(file)} className={cx('rounded-xl p-2', file.is_favorite ? 'bg-amber-50 text-amber-600' : 'text-slate-400 hover:bg-slate-100')} title="Favorite">
-            <Heart className={cx('h-4 w-4', file.is_favorite && 'fill-current')} />
-          </button>
+          <button onClick={() => onFavorite(file)} className={cx('rounded-xl p-2', file.is_favorite ? 'bg-amber-50 text-amber-600' : 'text-slate-400 hover:bg-slate-100')} title="Favorite"><Heart className={cx('h-4 w-4', file.is_favorite && 'fill-current')} /></button>
           <div className="flex items-center gap-1">
-            <a href={getDownloadUrl(file.id)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-primary" title="Download">
-              <Download className="h-4 w-4" />
-            </a>
-            <button onClick={() => onDelete(file)} className="rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600" title="Delete">
-              <Trash2 className="h-4 w-4" />
-            </button>
+            <a href={getDownloadUrl(file.id)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-primary" title="Download"><Download className="h-4 w-4" /></a>
+            <button onClick={() => onDelete(file)} className="rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-4 w-4" /></button>
           </div>
         </div>
       </div>
@@ -568,7 +728,21 @@ function FileCard({ file, onSelect, onFavorite, onDelete }: { file: StoredFile; 
   );
 }
 
-function DriveTable({ files, onSelect, onFavorite, onDelete }: { files: StoredFile[]; onSelect: (file: StoredFile) => void; onFavorite: (file: StoredFile) => void; onDelete: (file: StoredFile) => void }) {
+function FileTable({
+  files,
+  onSelect,
+  onFavorite,
+  onDelete,
+  onDragStart,
+  onDragEnd,
+}: {
+  files: StoredFile[];
+  onSelect: (file: StoredFile) => void;
+  onFavorite: (file: StoredFile) => void;
+  onDelete: (file: StoredFile) => void;
+  onDragStart: (id: string) => void;
+  onDragEnd: () => void;
+}) {
   return (
     <div className="overflow-hidden rounded-3xl border border-border">
       <div className="overflow-x-auto">
@@ -584,13 +758,14 @@ function DriveTable({ files, onSelect, onFavorite, onDelete }: { files: StoredFi
           </thead>
           <tbody className="divide-y divide-border bg-white">
             {files.map((file) => {
+              const isImage = getTypeGroup(file.mime_type) === 'image';
               const Icon = iconForMime(file.mime_type);
               return (
-                <tr key={file.id} className="hover:bg-slate-50/70">
+                <tr key={file.id} draggable onDragStart={() => onDragStart(file.id)} onDragEnd={onDragEnd} className="hover:bg-slate-50/70">
                   <td className="max-w-[320px] px-4 py-3">
                     <button onClick={() => onSelect(file)} className="flex min-w-0 items-center gap-3 text-left">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
-                        <Icon className="h-5 w-5" />
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-100 text-slate-500">
+                        {isImage ? <img src={getPreviewUrl(file.id)} alt="" className="h-full w-full object-cover" loading="lazy" /> : <Icon className="h-5 w-5" />}
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate font-medium text-slate-950">{file.original_name}</span>
@@ -603,15 +778,9 @@ function DriveTable({ files, onSelect, onFavorite, onDelete }: { files: StoredFi
                   <td className="px-4 py-3 text-slate-600">{formatDate(file.created_at)}</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button onClick={() => onFavorite(file)} className={cx('rounded-xl p-2', file.is_favorite ? 'text-amber-600' : 'text-slate-400 hover:bg-slate-100')}>
-                        <Heart className={cx('h-4 w-4', file.is_favorite && 'fill-current')} />
-                      </button>
-                      <a href={getDownloadUrl(file.id)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-primary">
-                        <Download className="h-4 w-4" />
-                      </a>
-                      <button onClick={() => onDelete(file)} className="rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <button onClick={() => onFavorite(file)} className={cx('rounded-xl p-2', file.is_favorite ? 'text-amber-600' : 'text-slate-400 hover:bg-slate-100')}><Heart className={cx('h-4 w-4', file.is_favorite && 'fill-current')} /></button>
+                      <a href={getDownloadUrl(file.id)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-primary"><Download className="h-4 w-4" /></a>
+                      <button onClick={() => onDelete(file)} className="rounded-xl p-2 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
                     </div>
                   </td>
                 </tr>
@@ -624,28 +793,28 @@ function DriveTable({ files, onSelect, onFavorite, onDelete }: { files: StoredFi
   );
 }
 
-function UploadQueueView({
+function UploadQueue({
   items,
   maxBytes,
   onPickFiles,
   onStart,
   onRetry,
+  onAddFiles,
   onClearCompleted,
   onCancelWaiting,
-  onDropFiles,
 }: {
   items: UploadItem[];
   maxBytes: number;
   onPickFiles: () => void;
   onStart: () => void;
   onRetry: () => void;
+  onAddFiles: (files: File[]) => void;
   onClearCompleted: () => void;
   onCancelWaiting: () => void;
-  onDropFiles: (files: FileList | File[]) => void;
 }) {
   const hasQueued = items.some((item) => item.status === 'queued' || item.status === 'retrying');
   const hasFailed = items.some((item) => item.status === 'failed');
-  const completedCount = items.filter((item) => item.status === 'uploaded').length;
+  const completedCount = items.filter((item) => item.status === 'uploaded' || item.status === 'skipped').length;
 
   return (
     <div className="rounded-[28px] border border-border bg-white/85 p-4 shadow-soft backdrop-blur">
@@ -665,7 +834,8 @@ function UploadQueueView({
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
           event.preventDefault();
-          if (event.dataTransfer.files.length) onDropFiles(event.dataTransfer.files);
+          const droppedFiles = Array.from(event.dataTransfer.files || []);
+          if (droppedFiles.length) onAddFiles(droppedFiles);
         }}
         className="mt-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-4"
       >
@@ -673,18 +843,12 @@ function UploadQueueView({
           <div className="flex min-h-[260px] flex-col items-center justify-center text-center">
             <UploadCloud className="h-10 w-10 text-primary" />
             <h3 className="mt-3 font-semibold text-slate-950">Pilih banyak file sekaligus</h3>
-            <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-              Sistem akan upload satu per satu ke Telegram sebagai document, jadi kualitas foto/video tidak dikompres.
-            </p>
-            <button onClick={onPickFiles} className="mt-5 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]">
-              Select files
-            </button>
+            <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Drop file ke sini atau klik tombol. Queue akan upload satu per satu agar lebih stabil.</p>
+            <button onClick={onPickFiles} className="mt-5 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]">Select files</button>
           </div>
         ) : (
           <div className="space-y-2">
-            {items.map((item) => (
-              <UploadQueueRow key={item.id} item={item} />
-            ))}
+            {items.map((item) => <UploadQueueRow key={item.id} item={item} />)}
           </div>
         )}
       </div>
@@ -722,11 +886,9 @@ function UploadQueueRow({ item }: { item: UploadItem }) {
             <p className="truncate text-sm font-medium text-slate-950">{item.file.name}</p>
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(item.file.size)}</span>
           </div>
+          <div className="mt-1 text-xs text-slate-500">Tujuan: {item.folder_name || 'Root'}</div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-            <div
-              className={cx('h-full rounded-full transition-all', item.status === 'failed' ? 'bg-red-500' : item.status === 'uploaded' ? 'bg-green-500' : 'bg-primary')}
-              style={{ width: `${item.progress}%` }}
-            />
+            <div className={cx('h-full rounded-full transition-all', item.status === 'failed' ? 'bg-red-500' : item.status === 'uploaded' ? 'bg-green-500' : 'bg-primary')} style={{ width: `${item.progress}%` }} />
           </div>
           {item.error && <p className="mt-2 text-xs text-red-600">{item.error}</p>}
         </div>
@@ -754,12 +916,8 @@ function SettingsView({ settings }: { settings: Settings | null }) {
 
       <div className="rounded-[28px] border border-blue-100 bg-blue-50/80 p-5 shadow-soft">
         <h3 className="font-semibold text-blue-950">Migration-ready</h3>
-        <p className="mt-2 text-sm leading-6 text-blue-800">
-          Database sudah menyimpan chat_id, message_id, file_id, provider, dan metadata penting agar nanti mudah pindah ke Local Bot API Server.
-        </p>
-        <div className="mt-4 rounded-2xl bg-white/70 p-3 text-xs leading-5 text-blue-900">
-          Buka <code>MIGRATION.md</code> untuk upgrade VPS + Local Bot API Server.
-        </div>
+        <p className="mt-2 text-sm leading-6 text-blue-800">Folder, preview, dan metadata tetap kompatibel untuk upgrade ke Local Bot API Server nanti.</p>
+        <div className="mt-4 rounded-2xl bg-white/70 p-3 text-xs leading-5 text-blue-900">Buka <code>MIGRATION.md</code> untuk upgrade VPS + Local Bot API Server.</div>
       </div>
     </div>
   );
@@ -776,31 +934,36 @@ function SettingCard({ label, value, tone = 'default' }: { label: string; value:
 
 function FileDrawer({
   file,
+  folders,
   onClose,
   onFavorite,
   onDelete,
   onSaved,
 }: {
   file: StoredFile;
+  folders: FolderItem[];
   onClose: () => void;
   onFavorite: () => void;
   onDelete: () => void;
   onSaved: (file: StoredFile) => void;
 }) {
   const [name, setName] = useState(file.original_name);
+  const [folderId, setFolderId] = useState<string | null>(file.folder_id || null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const Icon = iconForMime(file.mime_type);
+  const isImage = getTypeGroup(file.mime_type) === 'image';
 
   useEffect(() => {
     setName(file.original_name);
-  }, [file.id, file.original_name]);
+    setFolderId(file.folder_id || null);
+  }, [file.id, file.original_name, file.folder_id]);
 
   async function save() {
     setSaving(true);
     setError('');
     try {
-      const updated = await updateFile(file.id, { original_name: name });
+      const updated = await updateFile(file.id, { original_name: name, folder_id: folderId });
       onSaved(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menyimpan');
@@ -817,24 +980,26 @@ function FileDrawer({
             <h3 className="font-semibold text-slate-950">File details</h3>
             <p className="text-xs text-slate-500">Metadata tersimpan di D1</p>
           </div>
-          <button onClick={onClose} className="rounded-2xl p-2 text-slate-500 hover:bg-slate-100">
-            <MoreVertical className="h-5 w-5" />
-          </button>
+          <button onClick={onClose} className="rounded-2xl p-2 text-slate-500 hover:bg-slate-100"><MoreVertical className="h-5 w-5" /></button>
         </div>
 
         <div className="max-h-[calc(100vh-7rem)] overflow-y-auto p-4 scrollbar-thin">
-          <div className="flex aspect-video items-center justify-center rounded-3xl bg-slate-50 text-slate-400">
-            <Icon className="h-16 w-16" />
+          <div className="flex aspect-video items-center justify-center overflow-hidden rounded-3xl bg-slate-50 text-slate-400">
+            {isImage ? <img src={getPreviewUrl(file.id)} alt={file.original_name} className="h-full w-full object-contain" /> : <Icon className="h-16 w-16" />}
           </div>
 
           <div className="mt-5 space-y-4">
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">File name</label>
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-primary"
-              />
+              <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-primary" />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Folder</label>
+              <select value={folderId || 'root'} onChange={(event) => setFolderId(event.target.value === 'root' ? null : event.target.value)} className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-primary">
+                <option value="root">Root</option>
+                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+              </select>
             </div>
 
             {error && <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -853,18 +1018,10 @@ function FileDrawer({
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={save} disabled={saving || name.trim() === file.original_name} className="rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:opacity-50">
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-              <a href={getDownloadUrl(file.id)} className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                <Download className="h-4 w-4" /> Download
-              </a>
-              <button onClick={onFavorite} className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                <Heart className={cx('h-4 w-4', file.is_favorite && 'fill-current text-amber-600')} /> Favorite
-              </button>
-              <button onClick={onDelete} className="flex items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 hover:bg-red-100">
-                <Trash2 className="h-4 w-4" /> Delete
-              </button>
+              <button onClick={save} disabled={saving} className="rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+              <a href={getDownloadUrl(file.id)} className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Download className="h-4 w-4" /> Download</a>
+              <button onClick={onFavorite} className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Heart className={cx('h-4 w-4', file.is_favorite && 'fill-current text-amber-600')} /> Favorite</button>
+              <button onClick={onDelete} className="flex items-center justify-center gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 hover:bg-red-100"><Trash2 className="h-4 w-4" /> Delete</button>
             </div>
           </div>
         </div>
@@ -882,6 +1039,20 @@ function Meta({ label, value }: { label: string; value: string }) {
   );
 }
 
+function buildBreadcrumbs(folders: FolderItem[], currentFolderId: string | null): FolderItem[] {
+  const out: FolderItem[] = [];
+  let cursor = currentFolderId;
+  const guard = new Set<string>();
+  while (cursor && !guard.has(cursor)) {
+    guard.add(cursor);
+    const folder = folders.find((item) => item.id === cursor);
+    if (!folder) break;
+    out.unshift(folder);
+    cursor = folder.parent_id;
+  }
+  return out;
+}
+
 function iconForMime(mime: string) {
   const group = getTypeGroup(mime);
   if (group === 'image') return Image;
@@ -889,6 +1060,5 @@ function iconForMime(mime: string) {
   if (group === 'archive') return Archive;
   if (group === 'document') return FileIcon;
   if (group === 'audio') return FileIcon;
-  if (mime.includes('folder')) return Folder;
   return FileIcon;
 }

@@ -2,6 +2,7 @@ import { errorJson, getTelegramApiBase, json, logEvent, nowIso, sanitizeFileName
 
 interface FileRow {
   id: string;
+  folder_id: string | null;
   original_name: string;
   mime_type: string;
   size_bytes: number;
@@ -38,7 +39,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   const existing = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
   if (!existing) return errorJson('File tidak ditemukan', 404);
 
-  let body: { original_name?: string; is_favorite?: boolean; tags?: string[]; notes?: string | null };
+  let body: { original_name?: string; is_favorite?: boolean; tags?: string[]; notes?: string | null; folder_id?: string | null };
   try {
     body = await request.json();
   } catch {
@@ -49,12 +50,19 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
   const isFavorite = typeof body.is_favorite === 'boolean' ? (body.is_favorite ? 1 : 0) : existing.is_favorite;
   const tags = Array.isArray(body.tags) ? body.tags.filter((tag) => typeof tag === 'string').slice(0, 20) : safeParseTags(existing.tags_json);
   const notes = typeof body.notes === 'string' || body.notes === null ? body.notes : existing.notes;
+  const folderId = Object.prototype.hasOwnProperty.call(body, 'folder_id') ? (body.folder_id || null) : existing.folder_id;
+
+  if (folderId) {
+    const folder = await env.DB.prepare('SELECT id FROM folders WHERE id = ? LIMIT 1').bind(folderId).first<{ id: string }>();
+    if (!folder) return errorJson('Folder tujuan tidak ditemukan', 404);
+  }
+
   const updatedAt = nowIso();
 
   await env.DB.prepare(
-    'UPDATE files SET original_name = ?, is_favorite = ?, tags_json = ?, notes = ?, updated_at = ? WHERE id = ?',
+    'UPDATE files SET original_name = ?, is_favorite = ?, tags_json = ?, notes = ?, folder_id = ?, updated_at = ? WHERE id = ?',
   )
-    .bind(originalName, isFavorite, JSON.stringify(tags), notes, updatedAt, id)
+    .bind(originalName, isFavorite, JSON.stringify(tags), notes, folderId, updatedAt, id)
     .run();
 
   const updated = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
@@ -97,6 +105,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 function normalizeFile(file: FileRow) {
   return {
     ...file,
+    folder_id: file.folder_id || null,
     is_favorite: Boolean(file.is_favorite),
     tags: safeParseTags(file.tags_json),
   };

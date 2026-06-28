@@ -22,7 +22,9 @@ interface TelegramGetFileResponse {
 }
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-  const id = new URL(request.url).searchParams.get('id');
+  const url = new URL(request.url);
+  const id = url.searchParams.get('id');
+  const inline = url.searchParams.get('disposition') === 'inline';
   if (!id) return errorJson('Query `id` wajib diisi', 400);
 
   const file = await env.DB.prepare(
@@ -54,8 +56,8 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     status: 200,
     headers: {
       'content-type': file.mime_type || 'application/octet-stream',
-      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
-      'cache-control': 'private, no-store',
+      'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
+      'cache-control': inline ? 'private, max-age=3600' : 'private, no-store',
     },
   });
 };
