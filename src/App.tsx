@@ -768,30 +768,40 @@ function Toolbar({
   onTypeFilterChange: (type: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-b border-border bg-white px-4 py-3 md:flex-row md:items-center md:justify-between">
-      <div className="flex flex-wrap gap-2">
-        <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-          Type
-          <select value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value)} className="rounded-lg border border-border bg-white px-2 py-1.5 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary">
-            {typeFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-          Sort
-          <select value={sortMode} onChange={(event) => onSortChange(event.target.value as SortMode)} className="rounded-lg border border-border bg-white px-2 py-1.5 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary">
-            {sortOptions.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
-          </select>
-        </label>
-      </div>
+    <div className="flex flex-wrap items-center gap-3 border-b border-border bg-white px-4 py-3">
+      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+        Type
+        <select
+          value={typeFilter}
+          onChange={(event) => onTypeFilterChange(event.target.value)}
+          className="min-w-[150px] rounded-lg border border-border bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary"
+        >
+          {typeFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
+        </select>
+      </label>
 
-      <div className="inline-flex w-fit rounded-lg border border-border bg-slate-50 p-1">
-        <button onClick={() => onLayoutChange('list')} className={cx('inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm', layoutMode === 'list' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950')}>
-          <List className="h-4 w-4" /> List
-        </button>
-        <button onClick={() => onLayoutChange('grid')} className={cx('inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm', layoutMode === 'grid' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-950')}>
-          <Grid3X3 className="h-4 w-4" /> Grid
-        </button>
-      </div>
+      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+        Sort
+        <select
+          value={sortMode}
+          onChange={(event) => onSortChange(event.target.value as SortMode)}
+          className="min-w-[170px] rounded-lg border border-border bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary"
+        >
+          {sortOptions.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
+        </select>
+      </label>
+
+      <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+        View
+        <select
+          value={layoutMode}
+          onChange={(event) => onLayoutChange(event.target.value as LayoutMode)}
+          className="min-w-[140px] rounded-lg border border-border bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700 outline-none focus:border-primary"
+        >
+          <option value="list">List view</option>
+          <option value="grid">Grid view</option>
+        </select>
+      </label>
     </div>
   );
 }
