@@ -58,16 +58,17 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   if (checksum) {
     const duplicate = await env.DB.prepare(
-      'SELECT id, original_name, created_at FROM files WHERE checksum_sha256 = ? AND status != ? LIMIT 1',
+      'SELECT id, original_name, folder_id, created_at FROM files WHERE checksum_sha256 = ? AND status != ? LIMIT 1',
     )
       .bind(checksum, 'trash')
-      .first<{ id: string; original_name: string; created_at: string }>();
+      .first<{ id: string; original_name: string; folder_id: string | null; created_at: string }>();
 
     if (duplicate) {
-      return json({ ok: true, skipped: true, reason: 'duplicate', duplicate });
+      return json({ ok: true, skipped: true, reason: 'checksum_duplicate', duplicate });
     }
   }
 
+  const finalName = await getUniqueFileName(env, folderId, originalName);
   const preview = normalizeVariant(body.preview);
   const thumbnail = normalizeVariant(body.thumbnail);
   const id = crypto.randomUUID();
@@ -110,7 +111,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     .bind(
       id,
       folderId,
-      originalName,
+      finalName,
       mimeType,
       sizeBytes,
       checksum,
@@ -144,7 +145,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const file = {
     id,
     folder_id: folderId,
-    original_name: originalName,
+    original_name: finalName,
     mime_type: mimeType,
     size_bytes: sizeBytes,
     checksum_sha256: checksum,
@@ -176,13 +177,44 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   await logEvent(env, 'local_agent_file_synced', 'Local Agent synced file metadata', {
     id,
-    original_name: originalName,
+    original_name: finalName,
     size_bytes: sizeBytes,
     folder_id: folderId,
   });
 
   return json({ ok: true, file });
 };
+
+async function getUniqueFileName(env: Env, folderId: string | null, fileName: string): Promise<string> {
+  const cleanName = sanitizeFileName(fileName || 'file');
+  if (!(await fileNameExists(env, folderId, cleanName))) return cleanName;
+
+  const { base, ext } = splitFileName(cleanName);
+  for (let index = 1; index <= 500; index += 1) {
+    const candidate = `${base} (${index})${ext}`;
+    if (!(await fileNameExists(env, folderId, candidate))) return candidate;
+  }
+
+  return `${base} (${Date.now()})${ext}`;
+}
+
+async function fileNameExists(env: Env, folderId: string | null, fileName: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    folderId
+      ? 'SELECT id FROM files WHERE folder_id = ? AND original_name = ? AND status != ? LIMIT 1'
+      : 'SELECT id FROM files WHERE folder_id IS NULL AND original_name = ? AND status != ? LIMIT 1',
+  )
+    .bind(...(folderId ? [folderId, fileName, 'trash'] : [fileName, 'trash']))
+    .first<{ id: string }>();
+
+  return Boolean(row);
+}
+
+function splitFileName(fileName: string): { base: string; ext: string } {
+  const dot = fileName.lastIndexOf('.');
+  if (dot <= 0 || dot === fileName.length - 1) return { base: fileName, ext: '' };
+  return { base: fileName.slice(0, dot), ext: fileName.slice(dot) };
+}
 
 function normalizeVariant(value: TelegramVariantPayload | null | undefined) {
   if (!value || typeof value !== 'object') return null;

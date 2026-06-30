@@ -400,3 +400,57 @@ Patch ini memperbaiki `functions/_middleware.ts` agar route berikut tidak memaka
 ```
 
 Route Local Agent tetap aman karena memakai `LOCAL_AGENT_TOKEN` di masing-masing endpoint.
+
+
+## Local Agent folder upload
+
+Local Agent sekarang mendukung upload folder:
+
+```txt
+Choose files  → pilih beberapa file
+Choose folder → pilih 1 folder, semua file dan subfolder ikut diproses
+```
+
+Folder/subfolder akan otomatis dibuat di TeleCloud Online sesuai struktur lokal.
+
+Lihat detail:
+
+```txt
+LOCAL_AGENT_FOLDER_UPLOAD_GUIDE.md
+```
+
+
+## Local Agent retry failed
+
+Jika multi upload/folder upload menghasilkan sebagian file gagal, dashboard akan menampilkan tombol:
+
+```txt
+Retry failed
+```
+
+Tombol ini akan mencoba upload ulang hanya file yang gagal. File yang sudah sukses tidak diupload ulang.
+
+Lihat:
+
+```txt
+LOCAL_AGENT_RETRY_FAILED_GUIDE.md
+```
+
+
+## Duplicate Handling
+
+Upload online dan Local Agent sekarang memakai duplicate handling berbasis checksum:
+
+```txt
+File sama persis / checksum sama
+→ skip sebelum upload Telegram
+
+Nama sama tapi isi beda
+→ auto rename: file (1).ext
+```
+
+Lihat detail:
+
+```txt
+DUPLICATE_HANDLING_UPDATE.md
+```

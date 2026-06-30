@@ -82,44 +82,46 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const mimeType = incoming.type || 'application/octet-stream';
   const buffer = await incoming.arrayBuffer();
   const checksum = await sha256Hex(buffer);
-  const fileForTelegram = new File([buffer], originalName, { type: mimeType });
 
   const duplicate = await env.DB.prepare(
-    'SELECT id, original_name, created_at FROM files WHERE checksum_sha256 = ? AND status != ? LIMIT 1',
+    'SELECT id, original_name, folder_id, created_at FROM files WHERE checksum_sha256 = ? AND status != ? LIMIT 1',
   )
     .bind(checksum, 'trash')
-    .first<{ id: string; original_name: string; created_at: string }>();
+    .first<{ id: string; original_name: string; folder_id: string | null; created_at: string }>();
 
-  if (duplicate && form.get('skip_duplicates') === 'true') {
-    return json({ ok: true, skipped: true, reason: 'duplicate', duplicate });
+  if (duplicate) {
+    return json({ ok: true, skipped: true, reason: 'checksum_duplicate', duplicate });
   }
+
+  const finalName = await getUniqueFileName(env, folderId, originalName);
+  const fileForTelegram = new File([buffer], finalName, { type: mimeType });
 
   let originalUpload: UploadedTelegramDocument;
   let previewUpload: UploadedTelegramDocument | null = null;
   let thumbnailUpload: UploadedTelegramDocument | null = null;
 
   try {
-    originalUpload = await uploadDocumentToTelegram(env, channels.original_chat_id, fileForTelegram, originalName, `TeleCloud original · ${originalName}`);
+    originalUpload = await uploadDocumentToTelegram(env, channels.original_chat_id, fileForTelegram, finalName, `TeleCloud original · ${finalName}`);
 
     if (previewInput instanceof File && previewInput.size > 0) {
-      const previewName = sanitizeFileName(previewInput.name || makeVariantName(originalName, 'preview'));
+      const previewName = sanitizeFileName(previewInput.name || makeVariantName(finalName, 'preview'));
       previewUpload = await uploadDocumentToTelegram(
         env,
         channels.preview_chat_id || channels.original_chat_id,
         previewInput,
         previewName,
-        `TeleCloud preview · ${originalName}`,
+        `TeleCloud preview · ${finalName}`,
       );
     }
 
     if (thumbnailInput instanceof File && thumbnailInput.size > 0) {
-      const thumbName = sanitizeFileName(thumbnailInput.name || makeVariantName(originalName, 'thumbnail'));
+      const thumbName = sanitizeFileName(thumbnailInput.name || makeVariantName(finalName, 'thumbnail'));
       thumbnailUpload = await uploadDocumentToTelegram(
         env,
         channels.thumbnail_chat_id || channels.original_chat_id,
         thumbnailInput,
         thumbName,
-        `TeleCloud thumbnail · ${originalName}`,
+        `TeleCloud thumbnail · ${finalName}`,
       );
     }
   } catch (err) {
@@ -167,7 +169,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       .bind(
         id,
         folderId,
-        originalUpload.file_name || originalName,
+        finalName,
         originalUpload.mime_type || mimeType,
         originalUpload.size_bytes || incoming.size,
         checksum,
@@ -200,7 +202,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   } catch (err) {
     await logEvent(env, 'file_metadata_insert_failed', 'Gagal menyimpan metadata file variant', {
       id,
-      original_name: originalName,
+      original_name: finalName,
       error: String(err),
     });
     return errorJson('Upload Telegram berhasil, tapi gagal menyimpan metadata. Pastikan migration 0005 sudah dijalankan.', 500, String(err));
@@ -208,7 +210,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   await logEvent(env, 'file_uploaded', 'File berhasil diupload', {
     id,
-    original_name: originalName,
+    original_name: finalName,
     size_bytes: incoming.size,
     preview_size_bytes: previewUpload?.size_bytes || null,
     thumbnail_size_bytes: thumbnailUpload?.size_bytes || null,
@@ -219,7 +221,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     file: {
       id,
       folder_id: folderId,
-      original_name: originalUpload.file_name || originalName,
+      original_name: finalName,
       mime_type: originalUpload.mime_type || mimeType,
       size_bytes: originalUpload.size_bytes || incoming.size,
       checksum_sha256: checksum,
@@ -250,6 +252,37 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     },
   });
 };
+
+async function getUniqueFileName(env: Env, folderId: string | null, fileName: string): Promise<string> {
+  const cleanName = sanitizeFileName(fileName || 'file');
+  if (!(await fileNameExists(env, folderId, cleanName))) return cleanName;
+
+  const { base, ext } = splitFileName(cleanName);
+  for (let index = 1; index <= 500; index += 1) {
+    const candidate = `${base} (${index})${ext}`;
+    if (!(await fileNameExists(env, folderId, candidate))) return candidate;
+  }
+
+  return `${base} (${Date.now()})${ext}`;
+}
+
+async function fileNameExists(env: Env, folderId: string | null, fileName: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    folderId
+      ? 'SELECT id FROM files WHERE folder_id = ? AND original_name = ? AND status != ? LIMIT 1'
+      : 'SELECT id FROM files WHERE folder_id IS NULL AND original_name = ? AND status != ? LIMIT 1',
+  )
+    .bind(...(folderId ? [folderId, fileName, 'trash'] : [fileName, 'trash']))
+    .first<{ id: string }>();
+
+  return Boolean(row);
+}
+
+function splitFileName(fileName: string): { base: string; ext: string } {
+  const dot = fileName.lastIndexOf('.');
+  if (dot <= 0 || dot === fileName.length - 1) return { base: fileName, ext: '' };
+  return { base: fileName.slice(0, dot), ext: fileName.slice(dot) };
+}
 
 async function uploadDocumentToTelegram(env: Env, chatId: string, file: File, fileName: string, caption: string): Promise<UploadedTelegramDocument> {
   const telegramForm = new FormData();

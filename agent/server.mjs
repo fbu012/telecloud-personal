@@ -96,15 +96,55 @@ async function handleUpload(req) {
     throw new Error(`File terlalu besar untuk local agent limit (${MAX_FILE_MB} MB).`);
   }
 
-  const folderId = normalizeFolderId(parsed.fields.folder_id);
+  const baseFolderId = normalizeFolderId(parsed.fields.folder_id);
+  const relativePath = normalizeRelativePath(parsed.fields.relative_path || original.filename || 'file');
+  const folderId = await resolveFolderIdForRelativePath(baseFolderId, relativePath);
   const checksum = await sha256File(original.path);
+  const requestedName = sanitizeFileName(original.filename || getFileNameFromRelativePath(relativePath) || 'file');
+
+  const preflight = await callOnlineJson('/api/local-agent/preflight', {
+    method: 'POST',
+    body: JSON.stringify({
+      folder_id: folderId,
+      original_name: requestedName,
+      checksum_sha256: checksum,
+    }),
+  });
+
+  if (preflight.skipped || preflight.duplicate) {
+    const historyItem = {
+      id: randomUUID(),
+      original_name: requestedName,
+      folder_id: folderId,
+      relative_path: relativePath,
+      size_bytes: originalStats.size,
+      checksum_sha256: checksum,
+      online_file_id: preflight.duplicate?.id || null,
+      skipped: true,
+      skip_reason: preflight.reason || 'checksum_duplicate',
+      created_at: new Date().toISOString(),
+    };
+    await addHistory(historyItem);
+    await cleanupFiles(parsed.files);
+
+    return {
+      ok: true,
+      skipped: true,
+      reason: preflight.reason || 'checksum_duplicate',
+      duplicate: preflight.duplicate || null,
+      preflight,
+      telegram: null,
+    };
+  }
+
+  const finalName = sanitizeFileName(preflight.suggested_name || requestedName);
 
   const originalUpload = await uploadDocumentToTelegram({
     chatId: ORIGINAL_CHAT_ID,
     filePath: original.path,
-    fileName: sanitizeFileName(original.filename || 'file'),
+    fileName: finalName,
     contentType: original.mimeType || 'application/octet-stream',
-    caption: `TeleCloud local original · ${original.filename || 'file'}`,
+    caption: `TeleCloud local original · ${finalName}`,
   });
 
   let previewUpload = null;
@@ -113,9 +153,9 @@ async function handleUpload(req) {
     previewUpload = await uploadDocumentToTelegram({
       chatId: PREVIEW_CHAT_ID,
       filePath: preview.path,
-      fileName: sanitizeFileName(preview.filename || makeVariantName(original.filename || 'file', 'preview')),
+      fileName: sanitizeFileName(makeVariantName(finalName, 'preview')),
       contentType: preview.mimeType || 'image/jpeg',
-      caption: `TeleCloud local preview · ${original.filename || 'file'}`,
+      caption: `TeleCloud local preview · ${finalName}`,
     });
   }
 
@@ -125,15 +165,15 @@ async function handleUpload(req) {
     thumbnailUpload = await uploadDocumentToTelegram({
       chatId: THUMBNAIL_CHAT_ID,
       filePath: thumbnail.path,
-      fileName: sanitizeFileName(thumbnail.filename || makeVariantName(original.filename || 'file', 'thumbnail')),
+      fileName: sanitizeFileName(makeVariantName(finalName, 'thumbnail')),
       contentType: thumbnail.mimeType || 'image/jpeg',
-      caption: `TeleCloud local thumbnail · ${original.filename || 'file'}`,
+      caption: `TeleCloud local thumbnail · ${finalName}`,
     });
   }
 
   const syncPayload = {
     folder_id: folderId,
-    original_name: sanitizeFileName(original.filename || originalUpload.file_name || 'file'),
+    original_name: finalName,
     mime_type: original.mimeType || originalUpload.mime_type || 'application/octet-stream',
     size_bytes: originalStats.size,
     checksum_sha256: checksum,
@@ -151,10 +191,12 @@ async function handleUpload(req) {
     id: randomUUID(),
     original_name: syncPayload.original_name,
     folder_id: folderId,
+    relative_path: relativePath,
     size_bytes: syncPayload.size_bytes,
     checksum_sha256: checksum,
-    online_file_id: syncResult.file?.id || null,
+    online_file_id: syncResult.file?.id || syncResult.duplicate?.id || null,
     skipped: Boolean(syncResult.skipped),
+    skip_reason: syncResult.reason || null,
     created_at: new Date().toISOString(),
   };
   await addHistory(historyItem);
@@ -166,13 +208,53 @@ async function handleUpload(req) {
     file: syncResult.file || null,
     skipped: Boolean(syncResult.skipped),
     duplicate: syncResult.duplicate || null,
-    telegram: {
+    name_changed: finalName !== requestedName,
+    requested_name: requestedName,
+    final_name: finalName,
+    telegram: syncResult.skipped ? null : {
       original: summarizeTelegramUpload(originalUpload),
       preview: previewUpload ? summarizeTelegramUpload(previewUpload) : null,
       thumbnail: thumbnailUpload ? summarizeTelegramUpload(thumbnailUpload) : null,
     },
   };
 }
+
+async function resolveFolderIdForRelativePath(baseFolderId, relativePath) {
+  const folderParts = getFolderPartsFromRelativePath(relativePath);
+  if (!folderParts.length) return baseFolderId;
+
+  const result = await callOnlineJson('/api/local-agent/folders', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: baseFolderId,
+      path: folderParts,
+    }),
+  });
+
+  return result.folder_id || baseFolderId;
+}
+
+function getFolderPartsFromRelativePath(relativePath) {
+  const normalized = normalizeRelativePath(relativePath);
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length <= 1) return [];
+  return parts.slice(0, -1).map((part) => sanitizeFileName(part)).filter(Boolean);
+}
+
+function normalizeRelativePath(value) {
+  return String(value || '')
+    .replace(/\\+/g, '/')
+    .split('/')
+    .map((part) => part.trim())
+    .filter((part) => part && part !== '.' && part !== '..')
+    .join('/');
+}
+
+function getFileNameFromRelativePath(relativePath) {
+  const parts = normalizeRelativePath(relativePath).split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+}
+
 
 function ensureConfigured() {
   if (!TELECLOUD_BASE_URL) throw new Error('TELECLOUD_BASE_URL belum diisi di .env.agent');
@@ -756,6 +838,63 @@ function dashboardHtml() {
       background:var(--primary);
       transition:width .22s ease;
     }
+    .failed-panel {
+      display:none;
+      margin-top:12px;
+      border:1px solid #FECACA;
+      border-radius:11px;
+      background:#FEF2F2;
+      padding:12px;
+    }
+    .failed-panel h3 {
+      margin:0;
+      color:#991B1B;
+      font-size:13px;
+      font-weight:760;
+    }
+    .failed-list {
+      display:grid;
+      gap:7px;
+      max-height:150px;
+      margin-top:9px;
+      overflow:auto;
+    }
+    .failed-chip {
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+      border:1px solid #FECACA;
+      border-radius:10px;
+      background:#fff;
+      padding:8px 10px;
+      color:#7F1D1D;
+    }
+    .failed-chip strong {
+      display:block;
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      font-size:13px;
+      font-weight:700;
+    }
+    .failed-chip small {
+      display:block;
+      margin-top:2px;
+      color:#B91C1C;
+      font-size:12px;
+      line-height:1.4;
+    }
+    button.danger {
+      border-color:#FECACA;
+      background:#FEF2F2;
+      color:#B91C1C;
+    }
+    button.danger:hover {
+      background:#FEE2E2;
+      color:#991B1B;
+    }
     .log {
       min-height:130px;
       max-height:280px;
@@ -837,7 +976,9 @@ function dashboardHtml() {
               <div class="file-box">
                 <span id="fileSummary" class="muted">Belum ada file dipilih</span>
                 <button type="button" id="pickFiles">Choose files</button>
+                <button type="button" id="pickFolder">Choose folder</button>
                 <input id="file" class="hidden-input" type="file" multiple />
+                <input id="folderInput" class="hidden-input" type="file" webkitdirectory directory multiple />
               </div>
               <div id="selectedFiles" class="selected-list"></div>
             </div>
@@ -845,8 +986,20 @@ function dashboardHtml() {
 
           <div class="btns">
             <button class="primary" id="upload">Start local upload</button>
+            <button class="danger" id="retryFailed" style="display:none">Retry failed</button>
             <button id="clearSelection">Clear files</button>
             <button id="clear">Clear log</button>
+          </div>
+
+          <div id="failedPanel" class="failed-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+              <div>
+                <h3>Upload gagal</h3>
+                <p class="hint" id="failedSummary"></p>
+              </div>
+              <button class="danger" id="retryFailedPanel">Retry failed</button>
+            </div>
+            <div id="failedList" class="failed-list"></div>
           </div>
 
           <div id="progress" class="progress">
@@ -891,7 +1044,9 @@ function dashboardHtml() {
 <script>
 const $ = (id) => document.getElementById(id);
 let folders = [];
-let selectedFiles = [];
+let selectedItems = [];
+let failedItems = [];
+let selectionMode = 'files';
 
 function log(message) {
   const now = new Date().toLocaleTimeString();
@@ -977,64 +1132,99 @@ async function loadHistory() {
 }
 
 function renderSelectedFiles() {
-  if (!selectedFiles.length) {
+  if (!selectedItems.length) {
     $('fileSummary').textContent = 'Belum ada file dipilih';
     $('selectedFiles').innerHTML = '';
     return;
   }
 
-  const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
-  $('fileSummary').textContent = selectedFiles.length + ' file dipilih · ' + formatBytes(total);
-  $('selectedFiles').innerHTML = selectedFiles.map((file) => (
-    '<div class="file-chip"><strong title="' + escapeHtml(file.name) + '">' + escapeHtml(file.name) + '</strong><small>' + formatBytes(file.size) + '</small></div>'
-  )).join('');
+  const total = selectedItems.reduce((sum, item) => sum + item.file.size, 0);
+  const folderText = selectionMode === 'folder' ? 'folder upload · ' : '';
+  $('fileSummary').textContent = folderText + selectedItems.length + ' file dipilih · ' + formatBytes(total);
+  $('selectedFiles').innerHTML = selectedItems.map((item) => {
+    const label = item.relativePath || item.file.name;
+    return '<div class="file-chip"><strong title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</strong><small>' + formatBytes(item.file.size) + '</small></div>';
+  }).join('');
 }
 
+
+function renderFailedItems() {
+  const hasFailed = failedItems.length > 0;
+  $('retryFailed').style.display = hasFailed ? 'inline-flex' : 'none';
+  $('failedPanel').style.display = hasFailed ? 'block' : 'none';
+  if (!hasFailed) {
+    $('failedSummary').textContent = '';
+    $('failedList').innerHTML = '';
+    return;
+  }
+
+  $('failedSummary').textContent = failedItems.length + ' file gagal. Klik Retry failed untuk upload ulang hanya file yang gagal.';
+  $('failedList').innerHTML = failedItems.map((item) => {
+    const label = item.relativePath || item.file.name;
+    return '<div class="failed-chip"><div style="min-width:0"><strong title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</strong><small>' + escapeHtml(item.error || 'Upload failed') + '</small></div><small>' + formatBytes(item.file.size) + '</small></div>';
+  }).join('');
+}
+
+
 async function uploadAll() {
-  if (!selectedFiles.length) {
+  if (!selectedItems.length) {
     alert('Pilih file dulu.');
     return;
   }
 
+  failedItems = [];
+  renderFailedItems();
+
   $('upload').disabled = true;
   $('pickFiles').disabled = true;
+  $('pickFolder').disabled = true;
   $('refreshFolders').disabled = true;
   $('progress').style.display = 'block';
   $('log').textContent = 'Starting multi upload...';
 
   let success = 0;
+  let skipped = 0;
   let failed = 0;
 
-  for (let index = 0; index < selectedFiles.length; index += 1) {
-    const file = selectedFiles[index];
-    const base = (index / selectedFiles.length) * 100;
-    const span = 100 / selectedFiles.length;
+  for (let index = 0; index < selectedItems.length; index += 1) {
+    const item = selectedItems[index];
+    const base = (index / selectedItems.length) * 100;
+    const span = 100 / selectedItems.length;
 
     try {
-      await uploadOne(file, index + 1, selectedFiles.length, base, span);
-      success += 1;
+      const result = await uploadOne(item, index + 1, selectedItems.length, base, span);
+      if (result?.skipped) skipped += 1;
+      else success += 1;
     } catch (err) {
       failed += 1;
-      log('FAILED ' + file.name + ': ' + (err && err.message ? err.message : err));
+      const message = err && err.message ? err.message : String(err);
+      failedItems.push({ ...item, error: message });
+      renderFailedItems();
+      log('FAILED ' + (item.relativePath || item.file.name) + ': ' + message);
     }
   }
 
-  setProgress('Multi upload complete', 100, success + ' sukses, ' + failed + ' gagal');
-  log('Done. Success: ' + success + ', failed: ' + failed + '. Refresh TeleCloud Online to see uploaded files.');
+  setProgress('Multi upload complete', 100, success + ' sukses, ' + skipped + ' skipped, ' + failed + ' gagal');
+  log('Done. Success: ' + success + ', skipped: ' + skipped + ', failed: ' + failed + '. Refresh TeleCloud Online to see uploaded files.');
   await loadHistory();
+  renderFailedItems();
 
   $('upload').disabled = false;
   $('pickFiles').disabled = false;
+  $('pickFolder').disabled = false;
   $('refreshFolders').disabled = false;
 }
 
-async function uploadOne(file, number, total, base, span) {
-  const label = '[' + number + '/' + total + '] ' + file.name;
+async function uploadOne(item, number, total, base, span) {
+  const file = item.file;
+  const relativePath = item.relativePath || file.name;
+  const label = '[' + number + '/' + total + '] ' + relativePath;
   setProgress('Preparing file...', base + span * .04, label);
   log('Uploading ' + label);
 
   const form = new FormData();
   form.append('folder_id', $('folder').value || '');
+  form.append('relative_path', relativePath);
   form.append('file', file, file.name);
 
   if (file.type.startsWith('image/')) {
@@ -1047,8 +1237,10 @@ async function uploadOne(file, number, total, base, span) {
     if (preview) form.append('preview_file', preview, preview.name);
   }
 
-  await uploadWithProgress(form, base, span, label);
-  setProgress('File complete', base + span, label);
+  const result = await uploadWithProgress(form, base, span, label);
+  if (result?.skipped) setProgress('Skipped duplicate', base + span, label);
+  else setProgress('File complete', base + span, label);
+  return result;
 }
 
 function uploadWithProgress(form, base, span, label) {
@@ -1069,7 +1261,7 @@ function uploadWithProgress(form, base, span, label) {
         reject(new Error(data?.error || 'Upload failed'));
         return;
       }
-      setProgress('Syncing metadata online...', base + span * .92, label);
+      setProgress(data?.skipped ? 'Skipped duplicate' : 'Syncing metadata online...', base + span * .92, label);
       log(JSON.stringify(data, null, 2));
       resolve(data);
     };
@@ -1079,6 +1271,24 @@ function uploadWithProgress(form, base, span, label) {
     xhr.send(form);
   });
 }
+
+
+function retryFailedUploads() {
+  if (!failedItems.length) {
+    alert('Tidak ada file gagal untuk dicoba ulang.');
+    return;
+  }
+
+  selectedItems = failedItems.map((item) => ({
+    file: item.file,
+    relativePath: item.relativePath || item.file.name,
+  }));
+  failedItems = [];
+  renderSelectedFiles();
+  renderFailedItems();
+  uploadAll();
+}
+
 
 async function createImageVariant(file, maxSide, quality, suffix) {
   try {
@@ -1117,15 +1327,33 @@ function formatBytes(bytes) {
 }
 
 $('pickFiles').addEventListener('click', () => $('file').click());
+$('pickFolder').addEventListener('click', () => $('folderInput').click());
 $('file').addEventListener('change', () => {
-  selectedFiles = Array.from($('file').files || []);
+  selectionMode = 'files';
+  selectedItems = Array.from($('file').files || []).map((file) => ({ file, relativePath: file.name }));
+  $('folderInput').value = '';
+  renderSelectedFiles();
+});
+$('folderInput').addEventListener('change', () => {
+  selectionMode = 'folder';
+  selectedItems = Array.from($('folderInput').files || []).map((file) => ({
+    file,
+    relativePath: file.webkitRelativePath || file.name,
+  }));
+  $('file').value = '';
   renderSelectedFiles();
 });
 $('upload').addEventListener('click', uploadAll);
+$('retryFailed').addEventListener('click', retryFailedUploads);
+$('retryFailedPanel').addEventListener('click', retryFailedUploads);
 $('clearSelection').addEventListener('click', () => {
   $('file').value = '';
-  selectedFiles = [];
+  $('folderInput').value = '';
+  selectedItems = [];
+  failedItems = [];
+  selectionMode = 'files';
   renderSelectedFiles();
+  renderFailedItems();
 });
 $('clear').addEventListener('click', () => $('log').textContent = 'Ready.');
 $('refreshStatus').addEventListener('click', loadStatus);

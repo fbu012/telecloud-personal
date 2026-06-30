@@ -1038,3 +1038,21 @@ Local fingerprint != Cloud fingerprint
 ```
 
 maka isi ulang `LOCAL_AGENT_TOKEN` di Cloudflare, redeploy production, lalu restart agent lokal.
+
+
+## Local Agent folder upload
+
+Local Agent sekarang mendukung upload folder:
+
+```txt
+Choose files  → pilih beberapa file
+Choose folder → pilih 1 folder, semua file dan subfolder ikut diproses
+```
+
+Folder/subfolder akan otomatis dibuat di TeleCloud Online sesuai struktur lokal.
+
+Lihat detail:
+
+```txt
+LOCAL_AGENT_FOLDER_UPLOAD_GUIDE.md
+```
