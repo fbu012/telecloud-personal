@@ -4,6 +4,9 @@ export interface Env {
   SESSION_SECRET: string;
   BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
+  TELEGRAM_ORIGINAL_CHAT_ID?: string;
+  TELEGRAM_PREVIEW_CHAT_ID?: string;
+  TELEGRAM_THUMBNAIL_CHAT_ID?: string;
   TELEGRAM_API_BASE?: string;
   MAX_FILE_SIZE_MB?: string;
   APP_NAME?: string;
@@ -213,4 +216,46 @@ export async function requireFolderUnlocked(env: Env, request: Request, folderId
   if (ok) return null;
 
   return errorJson('Folder terkunci. Masukkan password folder untuk membuka.', 423, { folder_id: folderId, secure_folder: true });
+}
+
+export interface TelegramChannelSettings {
+  original_chat_id: string;
+  preview_chat_id: string;
+  thumbnail_chat_id: string;
+}
+
+export async function getAppSetting(env: Env, key: string, fallback = ''): Promise<string> {
+  try {
+    const row = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ? LIMIT 1').bind(key).first<{ value: string | null }>();
+    return row?.value || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function setAppSetting(env: Env, key: string, value: string | null): Promise<void> {
+  const now = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  )
+    .bind(key, value, now)
+    .run();
+}
+
+export async function getTelegramChannelSettings(env: Env): Promise<TelegramChannelSettings> {
+  const original = await getAppSetting(env, 'telegram_original_chat_id', env.TELEGRAM_ORIGINAL_CHAT_ID || env.TELEGRAM_CHAT_ID || '');
+  const preview = await getAppSetting(env, 'telegram_preview_chat_id', env.TELEGRAM_PREVIEW_CHAT_ID || env.TELEGRAM_CHAT_ID || '');
+  const thumbnail = await getAppSetting(env, 'telegram_thumbnail_chat_id', env.TELEGRAM_THUMBNAIL_CHAT_ID || env.TELEGRAM_CHAT_ID || '');
+
+  return {
+    original_chat_id: original.trim(),
+    preview_chat_id: preview.trim(),
+    thumbnail_chat_id: thumbnail.trim(),
+  };
+}
+
+export function isConfiguredChatId(value: string | null | undefined): boolean {
+  return Boolean(value && value.trim());
 }

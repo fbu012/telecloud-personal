@@ -97,31 +97,49 @@ BOT_TOKEN=123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ## 3. Buat private channel Telegram
 
-1. Buat channel baru di Telegram.
-2. Pilih **Private Channel**.
-3. Nama contoh:
+Versi terbaru mendukung **3 channel Telegram** untuk image variants:
 
 ```txt
-TeleCloud Personal Storage
+1. Original Channel
+   Untuk file asli/original.
+   Dipakai untuk download dan tombol View original size.
+
+2. Preview Channel
+   Untuk image compressed/optimized.
+   Dipakai untuk lightbox/preview awal.
+
+3. Thumbnail Channel
+   Untuk image kecil.
+   Dipakai untuk list/grid supaya loading cepat.
 ```
 
-4. Tambahkan bot kamu ke channel.
-5. Jadikan bot sebagai **Admin**.
-6. Minimal beri izin:
+Rekomendasi nama channel:
 
 ```txt
-Post Messages
-Edit Messages optional
-Delete Messages optional
+TeleCloud Original
+TeleCloud Preview
+TeleCloud Thumbnail
 ```
 
-Untuk upload saja, yang penting bot bisa post ke channel.
+Untuk setiap channel:
+
+```txt
+1. Buat channel Telegram baru.
+2. Pilih Private Channel.
+3. Tambahkan bot TeleCloud ke channel.
+4. Jadikan bot sebagai Admin.
+5. Minimal beri izin Post Messages.
+```
+
+Satu bot saja cukup. Tidak perlu membuat 3 bot.
+
+> `BOT_TOKEN` tetap disimpan sebagai Cloudflare Secret. Channel ID bisa diisi dari menu Settings aplikasi setelah deploy.
 
 ---
 
-## 4. Ambil TELEGRAM_CHAT_ID channel
+## 4. Ambil Channel ID Telegram
 
-`TELEGRAM_CHAT_ID` untuk private channel biasanya diawali dengan:
+Channel ID private biasanya diawali dengan:
 
 ```txt
 -100
@@ -129,18 +147,28 @@ Untuk upload saja, yang penting bot bisa post ke channel.
 
 Contoh:
 
+```txt
+-1001234567890
+```
+
+Kamu perlu mengambil ID untuk:
+
 ```env
-TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_ORIGINAL_CHAT_ID=-100xxxxxxxxxx
+TELEGRAM_PREVIEW_CHAT_ID=-100xxxxxxxxxx
+TELEGRAM_THUMBNAIL_CHAT_ID=-100xxxxxxxxxx
 ```
 
 ### Cara aman lewat getUpdates
 
 Setelah bot menjadi admin channel:
 
-1. Kirim satu pesan baru di channel, misalnya:
+1. Kirim pesan baru ke masing-masing channel, misalnya:
 
 ```txt
-init telecloud
+init original
+init preview
+init thumbnail
 ```
 
 2. Jalankan di PowerShell lokal:
@@ -156,19 +184,15 @@ Invoke-RestMethod "https://api.telegram.org/bot$env:BOT_TOKEN/getUpdates" | Conv
 "channel_post": {
   "chat": {
     "id": -1001234567890,
-    "title": "TeleCloud Personal Storage",
+    "title": "TeleCloud Original",
     "type": "channel"
   }
 }
 ```
 
-4. Copy angka `id` sebagai:
+4. Copy angka `id` sesuai channel-nya.
 
-```env
-TELEGRAM_CHAT_ID=-1001234567890
-```
-
-Jika hasil `getUpdates` kosong:
+Jika `getUpdates` kosong:
 
 ```txt
 []
@@ -176,14 +200,14 @@ Jika hasil `getUpdates` kosong:
 
 Coba ini:
 
+```txt
 1. Pastikan bot sudah admin channel.
-2. Kirim pesan baru lagi di channel setelah bot ditambahkan.
-3. Jalankan ulang `getUpdates`.
+2. Kirim pesan baru setelah bot ditambahkan.
+3. Jalankan ulang getUpdates.
 4. Jangan pakai pesan lama yang dikirim sebelum bot masuk channel.
+```
 
-### Test kirim pesan ke channel
-
-Setelah punya `TELEGRAM_CHAT_ID`, test:
+### Test manual kirim pesan ke channel
 
 ```powershell
 $env:BOT_TOKEN="ISI_TOKEN_BOT_KAMU"
@@ -194,7 +218,108 @@ Invoke-RestMethod -Method Post "https://api.telegram.org/bot$env:BOT_TOKEN/sendM
 }
 ```
 
-Kalau pesan masuk ke channel, berarti `BOT_TOKEN` dan `TELEGRAM_CHAT_ID` benar.
+Kalau pesan masuk, berarti bot dan channel ID sudah benar.
+
+### Pengaturan channel di aplikasi
+
+Setelah deploy, buka aplikasi:
+
+```txt
+Settings
+→ Telegram Storage Channels
+```
+
+Isi:
+
+```txt
+Original Channel ID
+Preview Channel ID
+Thumbnail Channel ID
+```
+
+Lalu klik:
+
+```txt
+Save channel settings
+Test channels
+```
+
+Jika test berhasil, aplikasi akan mengirim test message ke masing-masing channel.
+
+### Fallback env lama
+
+Untuk kompatibilitas, `TELEGRAM_CHAT_ID` lama masih bisa dipakai sebagai fallback original channel.
+
+Namun untuk setup terbaru, disarankan memakai 3 channel:
+
+```env
+BOT_TOKEN=123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELEGRAM_CHAT_ID=-100xxxxxxxxxx
+```
+
+Lalu isi 3 channel ID dari menu Settings aplikasi.
+
+Kalau ingin set dari Cloudflare env juga, aplikasi mendukung:
+
+```env
+TELEGRAM_ORIGINAL_CHAT_ID=-100xxxxxxxxxx
+TELEGRAM_PREVIEW_CHAT_ID=-100xxxxxxxxxx
+TELEGRAM_THUMBNAIL_CHAT_ID=-100xxxxxxxxxx
+```
+
+Tetapi cara paling fleksibel adalah mengisi channel ID dari menu Settings.
+
+---
+
+## 4A. Cara kerja thumbnail, preview, dan original
+
+Saat user upload image:
+
+```txt
+Image asli dari user
+→ browser membuat thumbnail kecil
+→ browser membuat preview optimized
+→ original tetap tidak dikompres
+→ ketiganya dikirim ke Telegram
+```
+
+Yang dikirim ke masing-masing channel bukan file original semua:
+
+```txt
+Original Channel  → file asli/original
+Preview Channel   → file compressed/optimized
+Thumbnail Channel → file kecil/thumbnail
+```
+
+Contoh:
+
+```txt
+IMG_001.jpg original: 4.8 MB
+Preview optimized:   450 KB
+Thumbnail:            40 KB
+```
+
+Di UI:
+
+```txt
+List/Grid       → load thumbnail
+Lightbox awal   → load optimized preview
+View original   → load original
+Download        → original
+```
+
+Upload queue juga menampilkan stage:
+
+```txt
+Preparing image...
+Creating thumbnail...
+Creating optimized preview...
+Uploading image variants...
+Saving metadata...
+Complete
+```
+
+> Image lama yang sudah diupload sebelum fitur ini tidak otomatis punya thumbnail/preview. Fitur ini aktif untuk upload image baru setelah patch diterapkan.
 
 ---
 

@@ -2,6 +2,7 @@ import {
   errorJson,
   getMaxFileSizeBytes,
   getTelegramApiBase,
+  getTelegramChannelSettings,
   logEvent,
   nowIso,
   sanitizeFileName,
@@ -30,13 +31,30 @@ interface TelegramSendDocumentResponse {
   parameters?: unknown;
 }
 
+interface UploadedTelegramDocument {
+  chat_id: string;
+  message_id: number;
+  file_id: string | null;
+  file_unique_id: string | null;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+}
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
-  if (!env.BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
-    return errorJson('BOT_TOKEN atau TELEGRAM_CHAT_ID belum dikonfigurasi', 500);
+  if (!env.BOT_TOKEN) {
+    return errorJson('BOT_TOKEN belum dikonfigurasi', 500);
+  }
+
+  const channels = await getTelegramChannelSettings(env);
+  if (!channels.original_chat_id) {
+    return errorJson('Original Channel ID belum dikonfigurasi. Isi di Settings atau TELEGRAM_CHAT_ID.', 500);
   }
 
   const form = await request.formData();
   const incoming = form.get('file');
+  const previewInput = form.get('preview_file');
+  const thumbnailInput = form.get('thumbnail_file');
 
   if (!(incoming instanceof File)) {
     return errorJson('Field `file` wajib berupa file', 400);
@@ -60,6 +78,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const locked = await requireFolderUnlocked(env, request, folderId);
     if (locked) return locked;
   }
+
   const mimeType = incoming.type || 'application/octet-stream';
   const buffer = await incoming.arrayBuffer();
   const checksum = await sha256Hex(buffer);
@@ -75,77 +94,124 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return json({ ok: true, skipped: true, reason: 'duplicate', duplicate });
   }
 
-  const telegramForm = new FormData();
-  telegramForm.append('chat_id', env.TELEGRAM_CHAT_ID);
-  telegramForm.append('document', fileForTelegram, originalName);
-  telegramForm.append('caption', `TeleCloud Personal · ${originalName}`);
-  telegramForm.append('disable_content_type_detection', 'false');
+  let originalUpload: UploadedTelegramDocument;
+  let previewUpload: UploadedTelegramDocument | null = null;
+  let thumbnailUpload: UploadedTelegramDocument | null = null;
 
-  const telegramUrl = `${getTelegramApiBase(env)}/bot${env.BOT_TOKEN}/sendDocument`;
-  const telegramResponse = await fetch(telegramUrl, { method: 'POST', body: telegramForm });
-  const telegramJson = (await telegramResponse.json().catch(() => null)) as TelegramSendDocumentResponse | null;
+  try {
+    originalUpload = await uploadDocumentToTelegram(env, channels.original_chat_id, fileForTelegram, originalName, `TeleCloud original · ${originalName}`);
 
-  if (!telegramResponse.ok || !telegramJson?.ok || !telegramJson.result?.message_id) {
-    await logEvent(env, 'telegram_upload_failed', 'Upload ke Telegram gagal', {
-      status: telegramResponse.status,
-      response: telegramJson,
-      file: originalName,
-    });
-    return errorJson('Upload ke Telegram gagal', telegramResponse.status || 502, telegramJson);
+    if (previewInput instanceof File && previewInput.size > 0) {
+      const previewName = sanitizeFileName(previewInput.name || makeVariantName(originalName, 'preview'));
+      previewUpload = await uploadDocumentToTelegram(
+        env,
+        channels.preview_chat_id || channels.original_chat_id,
+        previewInput,
+        previewName,
+        `TeleCloud preview · ${originalName}`,
+      );
+    }
+
+    if (thumbnailInput instanceof File && thumbnailInput.size > 0) {
+      const thumbName = sanitizeFileName(thumbnailInput.name || makeVariantName(originalName, 'thumbnail'));
+      thumbnailUpload = await uploadDocumentToTelegram(
+        env,
+        channels.thumbnail_chat_id || channels.original_chat_id,
+        thumbnailInput,
+        thumbName,
+        `TeleCloud thumbnail · ${originalName}`,
+      );
+    }
+  } catch (err) {
+    return errorJson(err instanceof Error ? err.message : 'Upload ke Telegram gagal', 502, String(err));
   }
 
-  const doc = telegramJson.result.document || {};
   const id = crypto.randomUUID();
   const createdAt = nowIso();
 
-  await env.DB.prepare(
-    `INSERT INTO files (
-      id,
-      folder_id,
-      original_name,
-      mime_type,
-      size_bytes,
-      checksum_sha256,
-      telegram_chat_id,
-      telegram_message_id,
-      telegram_file_id,
-      telegram_file_unique_id,
-      storage_provider,
-      upload_mode,
-      status,
-      is_favorite,
-      tags_json,
-      notes,
-      created_at,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      id,
-      folderId,
-      doc.file_name || originalName,
-      doc.mime_type || mimeType,
-      doc.file_size || incoming.size,
-      checksum,
-      env.TELEGRAM_CHAT_ID,
-      telegramJson.result.message_id,
-      doc.file_id || null,
-      doc.file_unique_id || null,
-      'telegram_bot_api',
-      'document',
-      'uploaded',
-      0,
-      '[]',
-      null,
-      createdAt,
-      createdAt,
+  try {
+    await env.DB.prepare(
+      `INSERT INTO files (
+        id,
+        folder_id,
+        original_name,
+        mime_type,
+        size_bytes,
+        checksum_sha256,
+        telegram_chat_id,
+        telegram_message_id,
+        telegram_file_id,
+        telegram_file_unique_id,
+        preview_telegram_chat_id,
+        preview_telegram_message_id,
+        preview_telegram_file_id,
+        preview_telegram_file_unique_id,
+        preview_mime_type,
+        preview_size_bytes,
+        thumbnail_telegram_chat_id,
+        thumbnail_telegram_message_id,
+        thumbnail_telegram_file_id,
+        thumbnail_telegram_file_unique_id,
+        thumbnail_mime_type,
+        thumbnail_size_bytes,
+        storage_provider,
+        upload_mode,
+        status,
+        is_favorite,
+        tags_json,
+        notes,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run();
+      .bind(
+        id,
+        folderId,
+        originalUpload.file_name || originalName,
+        originalUpload.mime_type || mimeType,
+        originalUpload.size_bytes || incoming.size,
+        checksum,
+        originalUpload.chat_id,
+        originalUpload.message_id,
+        originalUpload.file_id,
+        originalUpload.file_unique_id,
+        previewUpload?.chat_id || null,
+        previewUpload?.message_id || null,
+        previewUpload?.file_id || null,
+        previewUpload?.file_unique_id || null,
+        previewUpload?.mime_type || null,
+        previewUpload?.size_bytes || null,
+        thumbnailUpload?.chat_id || null,
+        thumbnailUpload?.message_id || null,
+        thumbnailUpload?.file_id || null,
+        thumbnailUpload?.file_unique_id || null,
+        thumbnailUpload?.mime_type || null,
+        thumbnailUpload?.size_bytes || null,
+        'telegram_bot_api',
+        'document',
+        'uploaded',
+        0,
+        '[]',
+        null,
+        createdAt,
+        createdAt,
+      )
+      .run();
+  } catch (err) {
+    await logEvent(env, 'file_metadata_insert_failed', 'Gagal menyimpan metadata file variant', {
+      id,
+      original_name: originalName,
+      error: String(err),
+    });
+    return errorJson('Upload Telegram berhasil, tapi gagal menyimpan metadata. Pastikan migration 0005 sudah dijalankan.', 500, String(err));
+  }
 
   await logEvent(env, 'file_uploaded', 'File berhasil diupload', {
     id,
     original_name: originalName,
     size_bytes: incoming.size,
+    preview_size_bytes: previewUpload?.size_bytes || null,
+    thumbnail_size_bytes: thumbnailUpload?.size_bytes || null,
   });
 
   return json({
@@ -153,14 +219,26 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     file: {
       id,
       folder_id: folderId,
-      original_name: doc.file_name || originalName,
-      mime_type: doc.mime_type || mimeType,
-      size_bytes: doc.file_size || incoming.size,
+      original_name: originalUpload.file_name || originalName,
+      mime_type: originalUpload.mime_type || mimeType,
+      size_bytes: originalUpload.size_bytes || incoming.size,
       checksum_sha256: checksum,
-      telegram_chat_id: env.TELEGRAM_CHAT_ID,
-      telegram_message_id: telegramJson.result.message_id,
-      telegram_file_id: doc.file_id || null,
-      telegram_file_unique_id: doc.file_unique_id || null,
+      telegram_chat_id: originalUpload.chat_id,
+      telegram_message_id: originalUpload.message_id,
+      telegram_file_id: originalUpload.file_id,
+      telegram_file_unique_id: originalUpload.file_unique_id,
+      preview_telegram_chat_id: previewUpload?.chat_id || null,
+      preview_telegram_message_id: previewUpload?.message_id || null,
+      preview_telegram_file_id: previewUpload?.file_id || null,
+      preview_telegram_file_unique_id: previewUpload?.file_unique_id || null,
+      preview_mime_type: previewUpload?.mime_type || null,
+      preview_size_bytes: previewUpload?.size_bytes || null,
+      thumbnail_telegram_chat_id: thumbnailUpload?.chat_id || null,
+      thumbnail_telegram_message_id: thumbnailUpload?.message_id || null,
+      thumbnail_telegram_file_id: thumbnailUpload?.file_id || null,
+      thumbnail_telegram_file_unique_id: thumbnailUpload?.file_unique_id || null,
+      thumbnail_mime_type: thumbnailUpload?.mime_type || null,
+      thumbnail_size_bytes: thumbnailUpload?.size_bytes || null,
       storage_provider: 'telegram_bot_api',
       upload_mode: 'document',
       status: 'uploaded',
@@ -172,3 +250,42 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     },
   });
 };
+
+async function uploadDocumentToTelegram(env: Env, chatId: string, file: File, fileName: string, caption: string): Promise<UploadedTelegramDocument> {
+  const telegramForm = new FormData();
+  telegramForm.append('chat_id', chatId);
+  telegramForm.append('document', file, fileName);
+  telegramForm.append('caption', caption);
+  telegramForm.append('disable_content_type_detection', 'false');
+
+  const telegramUrl = `${getTelegramApiBase(env)}/bot${env.BOT_TOKEN}/sendDocument`;
+  const telegramResponse = await fetch(telegramUrl, { method: 'POST', body: telegramForm });
+  const telegramJson = (await telegramResponse.json().catch(() => null)) as TelegramSendDocumentResponse | null;
+
+  if (!telegramResponse.ok || !telegramJson?.ok || !telegramJson.result?.message_id) {
+    await logEvent(env, 'telegram_upload_failed', 'Upload ke Telegram gagal', {
+      status: telegramResponse.status,
+      response: telegramJson,
+      file: fileName,
+      chat_id: chatId,
+    });
+    throw new Error(telegramJson?.description || `Upload ke Telegram gagal (HTTP ${telegramResponse.status})`);
+  }
+
+  const doc = telegramJson.result.document || {};
+  return {
+    chat_id: chatId,
+    message_id: telegramJson.result.message_id,
+    file_id: doc.file_id || null,
+    file_unique_id: doc.file_unique_id || null,
+    file_name: doc.file_name || fileName,
+    mime_type: doc.mime_type || file.type || 'application/octet-stream',
+    size_bytes: doc.file_size || file.size,
+  };
+}
+
+function makeVariantName(name: string, variant: 'preview' | 'thumbnail') {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return `${name}.${variant}.jpg`;
+  return `${name.slice(0, dot)}.${variant}.jpg`;
+}

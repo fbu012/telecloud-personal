@@ -53,6 +53,7 @@ import {
   getPublicShare,
   getMe,
   getPreviewUrl,
+  getThumbnailUrl,
   getSettings,
   listFiles,
   listFolders,
@@ -60,13 +61,15 @@ import {
   login,
   logout,
   revokeShareLink,
+  saveTelegramChannels,
+  testTelegramChannels,
   updateFile,
   unlockFolder,
   updateFolder,
   uploadFile,
 } from './lib/api';
 import { formatBytes, formatDate, getTypeGroup, typeLabel } from './lib/format';
-import type { FolderItem, PublicSharedFile, PublicShareData, Settings, ShareLink, StoredFile, UploadItem, ViewMode } from './lib/types';
+import type { FolderItem, PublicSharedFile, PublicShareData, Settings, ShareLink, StoredFile, UploadItem, UploadStatus, ViewMode } from './lib/types';
 
 type LayoutMode = 'list' | 'grid';
 type SortMode = 'newest' | 'oldest' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc' | 'type';
@@ -300,18 +303,55 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   }
 
   async function processOne(item: UploadItem) {
-    setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'uploading', progress: 35, error: undefined } : q)));
+    const setStage = (stage_label: string, progress: number) => {
+      setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'uploading', progress, stage_label, error: undefined } : q)));
+    };
+
+    setStage(getTypeGroup(item.file.type) === 'image' ? 'Preparing image...' : 'Preparing file...', 8);
+
     try {
-      const result = await uploadFile(item.file, false, item.folder_id || null, item.folder_id ? folderTokens[item.folder_id] || null : null);
+      let previewFile: File | null = null;
+      let thumbnailFile: File | null = null;
+
+      if (getTypeGroup(item.file.type) === 'image') {
+        try {
+          setStage('Creating thumbnail...', 18);
+          thumbnailFile = await createImageVariantFile(item.file, { maxSide: 240, quality: 0.72, suffix: 'thumbnail' });
+
+          setStage('Creating optimized preview...', 34);
+          previewFile = await createImageVariantFile(item.file, { maxSide: 1600, quality: 0.82, suffix: 'preview' });
+
+          const previewSize = previewFile ? ` · preview ${formatBytes(previewFile.size)}` : '';
+          const thumbSize = thumbnailFile ? ` · thumb ${formatBytes(thumbnailFile.size)}` : '';
+          setStage(`Uploading image variants${thumbSize}${previewSize}...`, 62);
+        } catch {
+          thumbnailFile = null;
+          previewFile = null;
+          setStage('Could not optimize image, uploading original...', 45);
+        }
+      } else {
+        setStage('Uploading original file...', 45);
+      }
+
+      const result = await uploadFile(
+        item.file,
+        false,
+        item.folder_id || null,
+        item.folder_id ? folderTokens[item.folder_id] || null : null,
+        { previewFile, thumbnailFile },
+      );
+
+      setStage('Saving metadata...', 94);
+
       if (result.skipped) {
-        setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'skipped', progress: 100 } : q)));
+        setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'skipped', progress: 100, stage_label: 'Skipped duplicate' } : q)));
       } else if (result.file) {
-        setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'uploaded', progress: 100, storedFile: result.file } : q)));
+        setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'uploaded', progress: 100, stage_label: 'Complete', storedFile: result.file } : q)));
         setFiles((prev) => [result.file!, ...prev.filter((file) => file.id !== result.file!.id)]);
       }
     } catch (err) {
       const message = err instanceof ApiError || err instanceof Error ? err.message : 'Upload gagal';
-      setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'failed', progress: 0, error: message } : q)));
+      setUploadItems((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: 'failed', progress: 0, stage_label: 'Failed', error: message } : q)));
     }
   }
 
@@ -611,7 +651,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
                 onCancelWaiting={() => setUploadItems((prev) => prev.filter((item) => !['queued', 'retrying'].includes(item.status)))}
               />
             ) : view === 'settings' ? (
-              <SettingsView settings={settings} onLogout={doLogout} />
+              <SettingsView settings={settings} onSaved={(updated) => setSettings((prev) => ({ ...(prev || updated), ...updated }))} onLogout={doLogout} />
             ) : view === 'drive' ? (
               <CorporateDriveView
                 files={visibleFiles}
@@ -1424,12 +1464,14 @@ function MediaLightbox({
   onDelete: (file: StoredFile) => void;
 }) {
   const [showDetails, setShowDetails] = useState(false);
+  const [useOriginal, setUseOriginal] = useState(false);
   const group = getTypeGroup(file.mime_type);
   const currentIndex = files.findIndex((item) => item.id === file.id);
   const canNavigate = files.length > 1;
 
   useEffect(() => {
     setShowDetails(false);
+    setUseOriginal(false);
   }, [file.id]);
 
   useEffect(() => {
@@ -1474,11 +1516,27 @@ function MediaLightbox({
               </button>
             )}
 
-            <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent">
+            <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-transparent">
               {group === 'video' ? (
                 <video src={getPreviewUrl(file.id)} controls className="max-h-full max-w-full rounded-lg shadow-sm" />
               ) : (
-                <img src={getPreviewUrl(file.id)} alt={file.original_name} className="max-h-full max-w-full rounded-lg object-contain shadow-sm" />
+                <>
+                  <img src={getPreviewUrl(file.id, undefined, useOriginal ? 'original' : 'preview')} alt={file.original_name} className="max-h-full max-w-full rounded-lg object-contain shadow-sm" />
+                  {file.preview_telegram_file_id && (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setUseOriginal((value) => !value);
+                      }}
+                      className="absolute bottom-3 right-3 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm backdrop-blur hover:bg-white"
+                    >
+                      {useOriginal ? 'Back to optimized preview' : 'View original size'}
+                    </button>
+                  )}
+                  <span className="absolute bottom-3 left-3 rounded-lg bg-slate-950/70 px-2.5 py-1.5 text-xs font-medium text-white">
+                    {useOriginal ? `Original · ${formatBytes(file.size_bytes)}` : `Optimized preview${file.preview_size_bytes ? ` · ${formatBytes(file.preview_size_bytes)}` : ''}`}
+                  </span>
+                </>
               )}
             </div>
 
@@ -1827,8 +1885,8 @@ function isPreviewable(file: StoredFile) {
 function FileThumb({ file, size }: { file: StoredFile; size: 'sm' | 'lg' }) {
   const group = getTypeGroup(file.mime_type);
   const Icon = iconForMime(file.mime_type);
-  if (group === 'image') {
-    return <img src={getPreviewUrl(file.id)} alt={file.original_name} className={cx(size === 'sm' ? 'h-10 w-10 rounded-md' : 'h-full w-full', 'object-cover')} loading="lazy" />;
+  if (group === 'image' && file.thumbnail_telegram_file_id) {
+    return <img src={getThumbnailUrl(file.id)} alt={file.original_name} className={cx(size === 'sm' ? 'h-10 w-10 rounded-md' : 'h-full w-full', 'object-cover')} loading="lazy" />;
   }
   return (
     <span className={cx('flex shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500', size === 'sm' ? 'h-10 w-10' : 'h-16 w-16')}>
@@ -1930,6 +1988,10 @@ function UploadQueueRow({ item }: { item: UploadItem }) {
             <span className="shrink-0 text-xs text-slate-500">{formatBytes(item.file.size)}</span>
           </div>
           <div className="mt-1 text-xs text-slate-500">Destination: {item.folder_name || 'Root'}</div>
+          <div className="mt-1 flex items-center justify-between gap-3 text-xs">
+            <span className={cx('truncate', item.stage_label ? 'text-slate-700' : 'text-slate-400')}>{item.stage_label || statusLabel(item.status)}</span>
+            <span className="shrink-0 font-medium text-slate-500">{Math.round(item.progress)}%</span>
+          </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
             <div className={cx('h-full transition-all', item.status === 'failed' ? 'bg-red-500' : item.status === 'uploaded' ? 'bg-green-500' : 'bg-primary')} style={{ width: `${item.progress}%` }} />
           </div>
@@ -1940,29 +2002,153 @@ function UploadQueueRow({ item }: { item: UploadItem }) {
   );
 }
 
-function SettingsView({ settings, onLogout }: { settings: Settings | null; onLogout: () => void }) {
+function statusLabel(status: UploadStatus) {
+  if (status === 'queued') return 'Waiting in queue';
+  if (status === 'retrying') return 'Ready to retry';
+  if (status === 'uploaded') return 'Complete';
+  if (status === 'skipped') return 'Skipped duplicate';
+  if (status === 'failed') return 'Failed';
+  return 'Uploading...';
+}
+
+function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | null; onSaved: (settings: Settings) => void; onLogout: () => void }) {
+  const [originalChatId, setOriginalChatId] = useState(settings?.telegram_original_chat_id || '');
+  const [previewChatId, setPreviewChatId] = useState(settings?.telegram_preview_chat_id || '');
+  const [thumbnailChatId, setThumbnailChatId] = useState(settings?.telegram_thumbnail_chat_id || '');
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [message, setMessage] = useState('');
+  const [testResults, setTestResults] = useState<Array<{ key: 'original' | 'preview' | 'thumbnail'; ok: boolean; chat_id?: string; error?: string | null }>>([]);
+
+  useEffect(() => {
+    setOriginalChatId(settings?.telegram_original_chat_id || '');
+    setPreviewChatId(settings?.telegram_preview_chat_id || '');
+    setThumbnailChatId(settings?.telegram_thumbnail_chat_id || '');
+  }, [settings?.telegram_original_chat_id, settings?.telegram_preview_chat_id, settings?.telegram_thumbnail_chat_id]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setMessage('');
+    try {
+      const updated = await saveTelegramChannels({
+        telegram_original_chat_id: originalChatId,
+        telegram_preview_chat_id: previewChatId,
+        telegram_thumbnail_chat_id: thumbnailChatId,
+      });
+      onSaved(updated);
+      setMessage('Telegram channel settings saved.');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Gagal menyimpan settings');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testChannels() {
+    setTesting(true);
+    setMessage('');
+    setTestResults([]);
+    try {
+      const results = await testTelegramChannels();
+      setTestResults(results);
+      setMessage(results.every((item) => item.ok) ? 'All channels connected.' : 'Some channels failed. Check bot admin access and channel ID.');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Gagal test channel');
+    } finally {
+      setTesting(false);
+    }
+  }
+
   return (
     <div className="grid gap-4 xl:grid-cols-3">
       <div className="rounded-lg border border-border bg-white p-5 shadow-sm xl:col-span-2">
         <h2 className="text-lg font-semibold text-slate-950">Settings</h2>
-        <p className="mt-1 text-sm text-slate-500">Runtime configuration from Cloudflare Environment Variables.</p>
+        <p className="mt-1 text-sm text-slate-500">Runtime configuration and Telegram storage channel settings.</p>
+
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <SettingCard label="Storage mode" value={settings?.storage_provider || 'telegram_bot_api'} />
           <SettingCard label="Max file size" value={`${settings?.max_file_size_mb || 20} MB/file`} />
           <SettingCard label="Upload mode" value={settings?.upload_mode || 'document'} />
           <SettingCard label="Telegram API" value={settings?.telegram_api_base || 'https://api.telegram.org'} />
           <SettingCard label="Bot token" value={settings?.bot_token_configured ? 'Configured' : 'Missing'} tone={settings?.bot_token_configured ? 'success' : 'danger'} />
-          <SettingCard label="Channel ID" value={settings?.telegram_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_chat_id_configured ? 'success' : 'danger'} />
+          <SettingCard label="Original channel" value={settings?.telegram_original_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_original_chat_id_configured ? 'success' : 'danger'} />
+          <SettingCard label="Preview channel" value={settings?.telegram_preview_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_preview_chat_id_configured ? 'success' : 'danger'} />
+          <SettingCard label="Thumbnail channel" value={settings?.telegram_thumbnail_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_thumbnail_chat_id_configured ? 'success' : 'danger'} />
         </div>
+
+        <form onSubmit={save} className="mt-6 rounded-lg border border-border bg-slate-50 p-4">
+          <div>
+            <h3 className="font-semibold text-slate-950">Telegram Storage Channels</h3>
+            <p className="mt-1 text-sm leading-6 text-slate-500">BOT_TOKEN tetap di Cloudflare Secret. Channel ID bisa kamu edit di sini supaya original, preview, dan thumbnail terpisah.</p>
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            <ChannelInput
+              label="Original Channel ID"
+              hint="File asli untuk download dan view original."
+              value={originalChatId}
+              onChange={setOriginalChatId}
+              placeholder="-100xxxxxxxxxx"
+            />
+            <ChannelInput
+              label="Preview Channel ID"
+              hint="Image compressed untuk lightbox / preview awal."
+              value={previewChatId}
+              onChange={setPreviewChatId}
+              placeholder="-100xxxxxxxxxx"
+            />
+            <ChannelInput
+              label="Thumbnail Channel ID"
+              hint="Image kecil untuk list/grid."
+              value={thumbnailChatId}
+              onChange={setThumbnailChatId}
+              placeholder="-100xxxxxxxxxx"
+            />
+          </div>
+
+          {message && <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">{message}</div>}
+
+          {testResults.length > 0 && (
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {testResults.map((result) => (
+                <div key={result.key} className={cx('rounded-lg border p-3 text-sm', result.ok ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800')}>
+                  <p className="font-semibold capitalize">{result.key}</p>
+                  <p className="mt-1 text-xs">{result.ok ? 'Connected' : result.error || 'Failed'}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="submit" disabled={saving} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af] disabled:opacity-50">{saving ? 'Saving...' : 'Save channel settings'}</button>
+            <button type="button" onClick={testChannels} disabled={testing} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{testing ? 'Testing...' : 'Test channels'}</button>
+          </div>
+        </form>
+
         <button onClick={onLogout} className="mt-5 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 lg:hidden">Logout</button>
       </div>
 
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 shadow-sm">
-        <h3 className="font-semibold text-blue-950">Migration-ready</h3>
-        <p className="mt-2 text-sm leading-6 text-blue-800">Folders, preview, and metadata remain compatible for a future VPS + Local Bot API Server upgrade.</p>
-        <div className="mt-4 rounded-lg bg-white/70 p-3 text-xs leading-5 text-blue-900">Read <code>MIGRATION.md</code> for the upgrade path.</div>
+        <h3 className="font-semibold text-blue-950">Image variant flow</h3>
+        <p className="mt-2 text-sm leading-6 text-blue-800">Images are prepared into thumbnail, optimized preview, and original file. Telegram stores the already-resized versions in their own channels.</p>
+        <div className="mt-4 rounded-lg bg-white/70 p-3 text-xs leading-5 text-blue-900">
+          List/Grid → thumbnail<br />
+          Lightbox → optimized preview<br />
+          Download → original
+        </div>
       </div>
     </div>
+  );
+}
+
+function ChannelInput({ label, hint, value, onChange, placeholder }: { label: string; hint: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  return (
+    <label className="block rounded-lg border border-border bg-white p-3">
+      <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-2 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary" />
+      <span className="mt-1 block text-xs leading-5 text-slate-500">{hint}</span>
+    </label>
   );
 }
 
@@ -2092,6 +2278,40 @@ function EmptyState() {
       <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Adjust the current filters or upload from the main toolbar when available.</p>
     </div>
   );
+}
+
+
+async function createImageVariantFile(
+  file: File,
+  options: { maxSide: number; quality: number; suffix: 'thumbnail' | 'preview' },
+): Promise<File | null> {
+  if (!file.type.startsWith('image/')) return null;
+
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, options.maxSide / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', options.quality));
+  if (!blob) return null;
+
+  return new File([blob], makeImageVariantName(file.name, options.suffix), { type: 'image/jpeg' });
+}
+
+function makeImageVariantName(name: string, suffix: 'thumbnail' | 'preview') {
+  const clean = name || 'image';
+  const dot = clean.lastIndexOf('.');
+  if (dot <= 0) return `${clean}.${suffix}.jpg`;
+  return `${clean.slice(0, dot)}.${suffix}.jpg`;
 }
 
 function buildBreadcrumbs(folders: FolderItem[], currentId: string | null): FolderItem[] {

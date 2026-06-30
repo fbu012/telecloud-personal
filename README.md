@@ -21,8 +21,9 @@ Stack awal:
 - Photos view dan Drive view
 - Search, filter tipe file, favorite, rename, soft delete
 - Download file melalui API proxy agar bot token tidak bocor ke browser
-- Settings page untuk melihat storage mode dan batas file
+- Settings page untuk melihat storage mode, batas file, dan mengatur 3 channel Telegram image variants
 - Dokumentasi migrasi ke Local Bot API Server
+- Image variants: thumbnail untuk list/grid, optimized preview untuk lightbox, original untuk download
 
 ## Batas awal
 
@@ -65,6 +66,10 @@ ADMIN_PASSWORD=ubah-password-ini
 SESSION_SECRET=ganti-dengan-random-string-panjang
 BOT_TOKEN=123456789:AA_your_bot_token
 TELEGRAM_CHAT_ID=-1001234567890
+# Optional untuk setup 3 channel via env. Bisa juga diisi dari Settings aplikasi.
+TELEGRAM_ORIGINAL_CHAT_ID=-1001234567890
+TELEGRAM_PREVIEW_CHAT_ID=-1001234567891
+TELEGRAM_THUMBNAIL_CHAT_ID=-1001234567892
 TELEGRAM_API_BASE=https://api.telegram.org
 MAX_FILE_SIZE_MB=20
 APP_NAME=TeleCloud Personal
@@ -121,6 +126,8 @@ Ringkasnya:
 
 - Jangan expose `BOT_TOKEN` ke frontend.
 - Jangan upload file sebagai `sendPhoto`; project ini memakai `sendDocument`.
+- Untuk image baru, aplikasi membuat 3 versi: thumbnail, optimized preview, dan original.
+- Channel ID original/preview/thumbnail bisa diatur dari menu Settings aplikasi.
 - Untuk bulk upload, frontend mengirim **1 file = 1 request**.
 - Untuk mode awal, file besar akan ditolak sebelum dikirim ke Telegram.
 - File lama tidak perlu dipindah saat nanti migrasi ke Local Bot API Server; database sudah menyimpan `chat_id`, `message_id`, `file_id`, dan metadata utama.

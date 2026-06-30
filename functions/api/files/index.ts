@@ -11,6 +11,18 @@ interface FileRow {
   telegram_message_id: number;
   telegram_file_id: string | null;
   telegram_file_unique_id: string | null;
+  preview_telegram_chat_id?: string | null;
+  preview_telegram_message_id?: number | null;
+  preview_telegram_file_id?: string | null;
+  preview_telegram_file_unique_id?: string | null;
+  preview_mime_type?: string | null;
+  preview_size_bytes?: number | null;
+  thumbnail_telegram_chat_id?: string | null;
+  thumbnail_telegram_message_id?: number | null;
+  thumbnail_telegram_file_id?: string | null;
+  thumbnail_telegram_file_unique_id?: string | null;
+  thumbnail_mime_type?: string | null;
+  thumbnail_size_bytes?: number | null;
   storage_provider: string;
   upload_mode: string;
   status: string;

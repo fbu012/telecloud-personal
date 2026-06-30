@@ -11,6 +11,18 @@ interface FileRow {
   telegram_message_id: number;
   telegram_file_id: string | null;
   telegram_file_unique_id: string | null;
+  preview_telegram_chat_id?: string | null;
+  preview_telegram_message_id?: number | null;
+  preview_telegram_file_id?: string | null;
+  preview_telegram_file_unique_id?: string | null;
+  preview_mime_type?: string | null;
+  preview_size_bytes?: number | null;
+  thumbnail_telegram_chat_id?: string | null;
+  thumbnail_telegram_message_id?: number | null;
+  thumbnail_telegram_file_id?: string | null;
+  thumbnail_telegram_file_unique_id?: string | null;
+  thumbnail_mime_type?: string | null;
+  thumbnail_size_bytes?: number | null;
   storage_provider: string;
   upload_mode: string;
   status: string;
@@ -88,9 +100,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       `INSERT INTO files (
         id, folder_id, original_name, mime_type, size_bytes, checksum_sha256,
         telegram_chat_id, telegram_message_id, telegram_file_id, telegram_file_unique_id,
+        preview_telegram_chat_id, preview_telegram_message_id, preview_telegram_file_id, preview_telegram_file_unique_id, preview_mime_type, preview_size_bytes,
+        thumbnail_telegram_chat_id, thumbnail_telegram_message_id, thumbnail_telegram_file_id, thumbnail_telegram_file_unique_id, thumbnail_mime_type, thumbnail_size_bytes,
         storage_provider, upload_mode, status, is_favorite, tags_json, notes,
         created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -103,6 +117,18 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         file.telegram_message_id,
         file.telegram_file_id,
         file.telegram_file_unique_id,
+        file.preview_telegram_chat_id || null,
+        file.preview_telegram_message_id || null,
+        file.preview_telegram_file_id || null,
+        file.preview_telegram_file_unique_id || null,
+        file.preview_mime_type || null,
+        file.preview_size_bytes || null,
+        file.thumbnail_telegram_chat_id || null,
+        file.thumbnail_telegram_message_id || null,
+        file.thumbnail_telegram_file_id || null,
+        file.thumbnail_telegram_file_unique_id || null,
+        file.thumbnail_mime_type || null,
+        file.thumbnail_size_bytes || null,
         file.storage_provider,
         file.upload_mode,
         'uploaded',

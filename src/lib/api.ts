@@ -102,9 +102,17 @@ export async function deleteFolder(id: string, folderToken?: string | null): Pro
   await parseJson(response);
 }
 
-export async function uploadFile(file: File, skipDuplicates = false, folderId: string | null = null, folderToken: string | null = null): Promise<{ file?: StoredFile; skipped?: boolean; reason?: string }> {
+export async function uploadFile(
+  file: File,
+  skipDuplicates = false,
+  folderId: string | null = null,
+  folderToken: string | null = null,
+  variants: { previewFile?: File | null; thumbnailFile?: File | null } = {},
+): Promise<{ file?: StoredFile; skipped?: boolean; reason?: string }> {
   const form = new FormData();
   form.append('file', file, file.name);
+  if (variants.previewFile) form.append('preview_file', variants.previewFile, variants.previewFile.name);
+  if (variants.thumbnailFile) form.append('thumbnail_file', variants.thumbnailFile, variants.thumbnailFile.name);
   form.append('skip_duplicates', skipDuplicates ? 'true' : 'false');
   if (folderId) form.append('folder_id', folderId);
 
@@ -144,13 +152,25 @@ export async function deleteFile(id: string, hard = false): Promise<void> {
 }
 
 export function getDownloadUrl(id: string, folderToken?: string | null): string {
-  const token = folderToken || getActiveFolderToken();
-  return `/api/files/download?id=${encodeURIComponent(id)}${token ? `&folder_token=${encodeURIComponent(token)}` : ''}`;
+  return getFileVariantUrl(id, 'original', false, folderToken);
 }
 
-export function getPreviewUrl(id: string, folderToken?: string | null): string {
+export function getPreviewUrl(id: string, folderToken?: string | null, variant: 'preview' | 'original' = 'preview'): string {
+  return getFileVariantUrl(id, variant, true, folderToken);
+}
+
+export function getThumbnailUrl(id: string, folderToken?: string | null): string {
+  return getFileVariantUrl(id, 'thumbnail', true, folderToken);
+}
+
+function getFileVariantUrl(id: string, variant: 'thumbnail' | 'preview' | 'original', inline: boolean, folderToken?: string | null): string {
   const token = folderToken || getActiveFolderToken();
-  return `/api/files/download?id=${encodeURIComponent(id)}&disposition=inline${token ? `&folder_token=${encodeURIComponent(token)}` : ''}`;
+  const url = new URL('/api/files/download', window.location.origin);
+  url.searchParams.set('id', id);
+  url.searchParams.set('variant', variant);
+  if (inline) url.searchParams.set('disposition', 'inline');
+  if (token) url.searchParams.set('folder_token', token);
+  return `${url.pathname}${url.search}`;
 }
 
 export async function unlockFolder(folderId: string, password: string): Promise<string> {
@@ -233,4 +253,28 @@ export function getPublicDownloadUrl(token: string, fileId?: string, inline = fa
   if (fileId) url.searchParams.set('file_id', fileId);
   if (inline) url.searchParams.set('disposition', 'inline');
   return `${url.pathname}${url.search}`;
+}
+
+export async function saveTelegramChannels(channels: {
+  telegram_original_chat_id: string;
+  telegram_preview_chat_id: string;
+  telegram_thumbnail_chat_id: string;
+}): Promise<Settings> {
+  const response = await fetch('/api/settings', {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(channels),
+  });
+  const data = await parseJson<{ ok: true } & Settings>(response);
+  return data;
+}
+
+export async function testTelegramChannels(): Promise<Array<{ key: 'original' | 'preview' | 'thumbnail'; ok: boolean; chat_id?: string; error?: string | null }>> {
+  const response = await fetch('/api/telegram/test-channels', {
+    method: 'POST',
+    credentials: 'include',
+  });
+  const data = await parseJson<{ ok: true; results: Array<{ key: 'original' | 'preview' | 'thumbnail'; ok: boolean; chat_id?: string; error?: string | null }> }>(response);
+  return data.results;
 }

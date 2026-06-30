@@ -20,6 +20,18 @@ export interface StoredFile {
   telegram_message_id: number;
   telegram_file_id?: string | null;
   telegram_file_unique_id?: string | null;
+  preview_telegram_chat_id?: string | null;
+  preview_telegram_message_id?: number | null;
+  preview_telegram_file_id?: string | null;
+  preview_telegram_file_unique_id?: string | null;
+  preview_mime_type?: string | null;
+  preview_size_bytes?: number | null;
+  thumbnail_telegram_chat_id?: string | null;
+  thumbnail_telegram_message_id?: number | null;
+  thumbnail_telegram_file_id?: string | null;
+  thumbnail_telegram_file_unique_id?: string | null;
+  thumbnail_mime_type?: string | null;
+  thumbnail_size_bytes?: number | null;
   storage_provider: string;
   upload_mode: string;
   status: string;
@@ -40,6 +52,7 @@ export interface UploadItem {
   folder_name?: string;
   status: UploadStatus;
   progress: number;
+  stage_label?: string;
   error?: string;
   storedFile?: StoredFile;
 }
@@ -51,6 +64,12 @@ export interface Settings {
   upload_mode: string;
   telegram_api_base: string;
   telegram_chat_id_configured: boolean;
+  telegram_original_chat_id?: string;
+  telegram_preview_chat_id?: string;
+  telegram_thumbnail_chat_id?: string;
+  telegram_original_chat_id_configured?: boolean;
+  telegram_preview_chat_id_configured?: boolean;
+  telegram_thumbnail_chat_id_configured?: boolean;
   bot_token_configured: boolean;
   migration_ready: boolean;
 }
