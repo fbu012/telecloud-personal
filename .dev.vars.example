@@ -6,3 +6,4 @@ TELEGRAM_API_BASE=https://api.telegram.org
 MAX_FILE_SIZE_MB=20
 APP_NAME=TeleCloud Personal
 DELETE_TELEGRAM_ON_HARD_DELETE=false
+LOCAL_AGENT_TOKEN=change-this-long-random-local-agent-token

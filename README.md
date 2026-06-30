@@ -25,6 +25,7 @@ Stack awal:
 - Dokumentasi migrasi ke Local Bot API Server
 - Image variants: thumbnail untuk list/grid, optimized preview untuk lightbox, original untuk download
 - Trash menu dengan restore, permanent delete, empty trash, dan auto-delete retention
+- Local Agent dashboard untuk upload file besar dari komputer lokal dan sync metadata ke online
 
 ## Batas awal
 
@@ -42,6 +43,7 @@ Alasannya: upload Bot API biasa bisa lebih besar, tetapi download via `getFile` 
 telecloud-personal/
 ├─ src/                      # React frontend
 ├─ functions/                # Cloudflare Pages Functions API
+├─ agent/                    # Local Agent dashboard + uploader
 ├─ migrations/               # Cloudflare D1 schema
 ├─ docs/                     # Dokumentasi tambahan
 ├─ MIGRATION.md              # Rencana upgrade ke Local Bot API Server
@@ -192,4 +194,38 @@ Lihat juga:
 
 ```txt
 DELETE_PROGRESS_UPDATE.md
+```
+
+
+## Local Agent
+
+TeleCloud sekarang punya Local Agent dengan dashboard kecil:
+
+```txt
+http://localhost:8788
+```
+
+Jalankan:
+
+```powershell
+copy .env.agent.example .env.agent
+npm run agent
+```
+
+Local Agent berguna untuk upload file besar dari komputer lokal:
+
+```txt
+Local Agent → Telegram → Online API → D1 metadata
+```
+
+Tambahkan secret online:
+
+```powershell
+npx wrangler pages secret put LOCAL_AGENT_TOKEN --project-name=telecloud-personal
+```
+
+Lihat detail:
+
+```txt
+LOCAL_AGENT_GUIDE.md
 ```

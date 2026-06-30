@@ -2476,6 +2476,7 @@ function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | nu
           <SettingCard label="Upload mode" value={settings?.upload_mode || 'document'} />
           <SettingCard label="Telegram API" value={settings?.telegram_api_base || 'https://api.telegram.org'} />
           <SettingCard label="Bot token" value={settings?.bot_token_configured ? 'Configured' : 'Missing'} tone={settings?.bot_token_configured ? 'success' : 'danger'} />
+          <SettingCard label="Local Agent API" value={settings?.local_agent_token_configured ? 'Enabled' : 'Missing token'} tone={settings?.local_agent_token_configured ? 'success' : 'danger'} />
           <SettingCard label="Original channel" value={settings?.telegram_original_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_original_chat_id_configured ? 'success' : 'danger'} />
           <SettingCard label="Preview channel" value={settings?.telegram_preview_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_preview_chat_id_configured ? 'success' : 'danger'} />
           <SettingCard label="Thumbnail channel" value={settings?.telegram_thumbnail_chat_id_configured ? 'Configured' : 'Missing'} tone={settings?.telegram_thumbnail_chat_id_configured ? 'success' : 'danger'} />
@@ -2547,13 +2548,25 @@ function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | nu
         <button onClick={onLogout} className="mt-5 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 lg:hidden">Logout</button>
       </div>
 
-      <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 shadow-sm">
-        <h3 className="font-semibold text-blue-950">Image variant flow</h3>
-        <p className="mt-2 text-sm leading-6 text-blue-800">Images are prepared into thumbnail, optimized preview, and original file. Telegram stores the already-resized versions in their own channels.</p>
-        <div className="mt-4 rounded-lg bg-white/70 p-3 text-xs leading-5 text-blue-900">
-          List/Grid → thumbnail<br />
-          Lightbox → optimized preview<br />
-          Download → original
+      <div className="space-y-4">
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 shadow-sm">
+          <h3 className="font-semibold text-blue-950">Image variant flow</h3>
+          <p className="mt-2 text-sm leading-6 text-blue-800">Images are prepared into thumbnail, optimized preview, and original file. Telegram stores the already-resized versions in their own channels.</p>
+          <div className="mt-4 rounded-lg bg-white/70 p-3 text-xs leading-5 text-blue-900">
+            List/Grid → thumbnail<br />
+            Lightbox → optimized preview<br />
+            Download → original
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+          <h3 className="font-semibold text-emerald-950">Local Agent</h3>
+          <p className="mt-2 text-sm leading-6 text-emerald-800">Run the local dashboard on your computer for larger uploads, then sync metadata back to this online app.</p>
+          <div className="mt-4 rounded-lg bg-white/70 p-3 text-xs leading-5 text-emerald-900">
+            Command: <code>npm run agent</code><br />
+            Dashboard: <code>http://localhost:8788</code><br />
+            Online API token: {settings?.local_agent_token_configured ? 'Configured' : 'Missing'}
+          </div>
         </div>
       </div>
     </div>

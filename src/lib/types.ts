@@ -72,6 +72,7 @@ export interface Settings {
   telegram_thumbnail_chat_id_configured?: boolean;
   bot_token_configured: boolean;
   trash_auto_delete_days?: number;
+  local_agent_token_configured?: boolean;
   migration_ready: boolean;
 }
 

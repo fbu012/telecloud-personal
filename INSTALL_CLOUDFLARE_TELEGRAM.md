@@ -929,3 +929,59 @@ Lihat detail di:
 ```txt
 MIGRATION.md
 ```
+
+
+---
+
+## Local Agent setup
+
+Untuk upload file besar dari komputer lokal, gunakan Local Agent.
+
+### 1. Tambahkan secret di Cloudflare
+
+```powershell
+npx wrangler pages secret put LOCAL_AGENT_TOKEN --project-name=telecloud-personal
+```
+
+Isi token random panjang. Token ini harus sama dengan `.env.agent` di komputer lokal.
+
+### 2. Buat file `.env.agent`
+
+```powershell
+copy .env.agent.example .env.agent
+```
+
+Isi:
+
+```env
+TELECLOUD_BASE_URL=https://file.utamadigital.id
+LOCAL_AGENT_TOKEN=token-yang-sama-dengan-cloudflare
+
+BOT_TOKEN=123456789:AAxxxxxxxx
+TELEGRAM_API_BASE=https://api.telegram.org
+
+TELEGRAM_ORIGINAL_CHAT_ID=-100xxxxxxxxxx
+TELEGRAM_PREVIEW_CHAT_ID=-100xxxxxxxxxx
+TELEGRAM_THUMBNAIL_CHAT_ID=-100xxxxxxxxxx
+
+LOCAL_AGENT_PORT=8788
+LOCAL_AGENT_MAX_FILE_MB=2048
+```
+
+### 3. Jalankan Local Agent
+
+```powershell
+npm run agent
+```
+
+Buka:
+
+```txt
+http://localhost:8788
+```
+
+Lihat panduan lengkap:
+
+```txt
+LOCAL_AGENT_GUIDE.md
+```

@@ -11,6 +11,7 @@ export interface Env {
   MAX_FILE_SIZE_MB?: string;
   APP_NAME?: string;
   DELETE_TELEGRAM_ON_HARD_DELETE?: string;
+  LOCAL_AGENT_TOKEN?: string;
 }
 
 export type ApiContext = EventContext<Env, string, unknown>;
@@ -258,4 +259,18 @@ export async function getTelegramChannelSettings(env: Env): Promise<TelegramChan
 
 export function isConfiguredChatId(value: string | null | undefined): boolean {
   return Boolean(value && value.trim());
+}
+
+export function requireLocalAgentAuth(env: Env, request: Request): Response | null {
+  if (!env.LOCAL_AGENT_TOKEN) {
+    return errorJson('LOCAL_AGENT_TOKEN belum dikonfigurasi di Cloudflare Environment Variables.', 500);
+  }
+
+  const header = request.headers.get('authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : request.headers.get('x-local-agent-token') || '';
+  if (!token || token !== env.LOCAL_AGENT_TOKEN) {
+    return errorJson('Local agent token tidak valid.', 401);
+  }
+
+  return null;
 }

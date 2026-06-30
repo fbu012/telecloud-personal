@@ -30,6 +30,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
     telegram_thumbnail_chat_id_configured: isConfiguredChatId(channels.thumbnail_chat_id),
     bot_token_configured: Boolean(env.BOT_TOKEN),
     trash_auto_delete_days: trashAutoDeleteDays,
+    local_agent_token_configured: Boolean(env.LOCAL_AGENT_TOKEN),
     migration_ready: true,
   });
 };
@@ -76,6 +77,7 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env }) => {
     telegram_preview_chat_id_configured: isConfiguredChatId(channels.preview_chat_id),
     telegram_thumbnail_chat_id_configured: isConfiguredChatId(channels.thumbnail_chat_id),
     trash_auto_delete_days: trashAutoDeleteDays,
+    local_agent_token_configured: Boolean(env.LOCAL_AGENT_TOKEN),
   });
 };
 

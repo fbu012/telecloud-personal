@@ -45,3 +45,23 @@ Saat migrasi:
 - Jalankan di localhost VPS.
 - Letakkan upload API di belakang HTTPS.
 - Pakai auth/token internal untuk komunikasi Cloudflare ↔ VPS.
+
+
+## Local Agent security
+
+Local Agent memakai token khusus:
+
+```env
+LOCAL_AGENT_TOKEN
+```
+
+Token ini harus:
+
+```txt
+- disimpan sebagai Cloudflare Secret
+- disimpan lokal di .env.agent
+- tidak dipush ke GitHub
+- dibuat panjang dan random
+```
+
+Local Agent boleh menyimpan `BOT_TOKEN` di komputer lokal, tapi file `.env.agent` sudah masuk `.gitignore` dan tidak boleh dibagikan.

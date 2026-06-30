@@ -11,12 +11,17 @@
     "cf:deploy": "npm run build && wrangler pages deploy dist --project-name telecloud-personal",
     "d1:create": "wrangler d1 create telecloud_personal_db",
     "d1:migrate:local": "wrangler d1 execute telecloud_personal_db --local --file=migrations/0001_init.sql",
-    "d1:migrate:remote": "wrangler d1 execute telecloud_personal_db --remote --file=migrations/0001_init.sql"
+    "d1:migrate:remote": "wrangler d1 execute telecloud_personal_db --remote --file=migrations/0001_init.sql",
+    "agent": "node agent/server.mjs",
+    "agent:dev": "node --watch agent/server.mjs"
   },
   "dependencies": {
     "lucide-react": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "busboy": "latest",
+    "dotenv": "latest",
+    "form-data": "latest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
