@@ -81,6 +81,9 @@ type LayoutMode = 'list' | 'grid';
 type SortMode = 'newest' | 'oldest' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc' | 'type';
 type NavItem = { key: ViewMode; label: string; icon: typeof Folder; hint?: string };
 type ShareTarget = { type: 'file'; file: StoredFile } | { type: 'folder'; folder: FolderItem };
+type DeleteProgress = { label: string; progress: number };
+type DeleteProgressUpdater = (progress: DeleteProgress) => void;
+
 
 const typeFilters = [
   { value: 'all', label: 'All types' },
@@ -406,51 +409,66 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     setDeleteTarget(file);
   }
 
-  async function performFileDelete(file: StoredFile, hard: boolean) {
-    let folderToken = await getFolderTokenForFileAction(file, hard ? 'hapus permanen' : 'pindahkan ke trash');
-    if (folderToken === 'cancelled') return;
+  async function performFileDelete(file: StoredFile, hard: boolean, onProgress?: DeleteProgressUpdater) {
+    onProgress?.({ label: file.folder_id ? 'Checking secure folder access...' : 'Preparing delete...', progress: 12 });
 
-    try {
-      const result = await deleteFile(file.id, hard, folderToken, hard);
-      setDeleteTarget(null);
+    let folderToken = await getFolderTokenForFileAction(file, hard ? 'hapus permanen' : 'pindahkan ke trash');
+    if (folderToken === 'cancelled') {
+      onProgress?.({ label: 'Delete cancelled', progress: 0 });
+      return;
+    }
+
+    const finishSuccess = async (result: { telegram?: { deleted: number; failed: number } }) => {
+      onProgress?.({ label: 'Refreshing file list...', progress: 88 });
       setFiles((prev) => prev.filter((item) => item.id !== file.id));
       setTrashFiles((prev) => prev.filter((item) => item.id !== file.id));
       if (selected?.id === file.id) setSelected(null);
       if (lightboxFileId === file.id) setLightboxFileId(null);
+      await refresh();
 
+      onProgress?.({ label: 'Delete complete', progress: 100 });
       if (hard) {
         const telegram = result.telegram;
         setNotice(`File dihapus permanen${telegram ? ` · Telegram deleted ${telegram.deleted}, failed ${telegram.failed}` : ''}`);
       } else {
         setNotice(`File "${file.original_name}" dipindahkan ke Trash`);
       }
-      await refresh();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
+      setDeleteTarget(null);
+    };
+
+    try {
+      onProgress?.({
+        label: hard ? 'Deleting permanently from D1 and Telegram...' : 'Moving file to Trash...',
+        progress: hard ? 52 : 58,
+      });
+      const result = await deleteFile(file.id, hard, folderToken, hard);
+      await finishSuccess(result);
     } catch (err) {
       if (err instanceof ApiError && err.status === 423 && file.folder_id) {
+        onProgress?.({ label: 'Folder token expired. Password required...', progress: 28 });
         const retryToken = await promptAndUnlockFolderForFile(file, hard ? 'hapus permanen' : 'pindahkan ke trash');
-        if (!retryToken) return;
+        if (!retryToken) {
+          onProgress?.({ label: 'Delete cancelled', progress: 0 });
+          return;
+        }
 
         try {
+          onProgress?.({
+            label: hard ? 'Retrying permanent delete...' : 'Retrying move to Trash...',
+            progress: hard ? 55 : 62,
+          });
           const result = await deleteFile(file.id, hard, retryToken, hard);
-          setDeleteTarget(null);
-          setFiles((prev) => prev.filter((item) => item.id !== file.id));
-          setTrashFiles((prev) => prev.filter((item) => item.id !== file.id));
-          if (selected?.id === file.id) setSelected(null);
-          if (lightboxFileId === file.id) setLightboxFileId(null);
-          if (hard) {
-            const telegram = result.telegram;
-            setNotice(`File dihapus permanen${telegram ? ` · Telegram deleted ${telegram.deleted}, failed ${telegram.failed}` : ''}`);
-          } else {
-            setNotice(`File "${file.original_name}" dipindahkan ke Trash`);
-          }
-          await refresh();
+          await finishSuccess(result);
           return;
         } catch (retryErr) {
+          onProgress?.({ label: 'Delete failed', progress: 0 });
           setNotice(retryErr instanceof Error ? retryErr.message : 'Gagal menghapus file');
           return;
         }
       }
 
+      onProgress?.({ label: 'Delete failed', progress: 0 });
       setNotice(err instanceof Error ? err.message : 'Gagal menghapus file');
     }
   }
@@ -923,8 +941,8 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
         <DeleteFileDialog
           file={deleteTarget}
           onClose={() => setDeleteTarget(null)}
-          onMoveToTrash={() => performFileDelete(deleteTarget, false)}
-          onPermanentDelete={() => performFileDelete(deleteTarget, true)}
+          onMoveToTrash={(onProgress) => performFileDelete(deleteTarget, false, onProgress)}
+          onPermanentDelete={(onProgress) => performFileDelete(deleteTarget, true, onProgress)}
         />
       )}
 
@@ -2000,23 +2018,28 @@ function DeleteFileDialog({
 }: {
   file: StoredFile;
   onClose: () => void;
-  onMoveToTrash: () => void;
-  onPermanentDelete: () => void;
+  onMoveToTrash: (onProgress: DeleteProgressUpdater) => Promise<void>;
+  onPermanentDelete: (onProgress: DeleteProgressUpdater) => Promise<void>;
 }) {
   const [busy, setBusy] = useState<'trash' | 'permanent' | null>(null);
+  const [progress, setProgress] = useState<DeleteProgress>({ label: 'Choose delete option', progress: 0 });
 
   async function run(action: 'trash' | 'permanent') {
     setBusy(action);
+    setProgress({ label: action === 'trash' ? 'Preparing move to Trash...' : 'Preparing permanent delete...', progress: 8 });
+
     try {
-      if (action === 'trash') await onMoveToTrash();
-      else await onPermanentDelete();
+      if (action === 'trash') await onMoveToTrash(setProgress);
+      else await onPermanentDelete(setProgress);
     } finally {
       setBusy(null);
     }
   }
 
+  const busyLabel = busy === 'trash' ? 'Moving to Trash' : busy === 'permanent' ? 'Deleting permanently' : '';
+
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={() => { if (!busy) onClose(); }}>
       <div className="w-full max-w-md rounded-lg border border-border bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <div className="border-b border-border px-5 py-4">
           <h3 className="text-base font-semibold text-slate-950">Delete file</h3>
@@ -2032,7 +2055,9 @@ function DeleteFileDialog({
             className="w-full rounded-lg border border-border bg-white p-4 text-left hover:bg-slate-50 disabled:opacity-60"
           >
             <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><Trash2 className="h-4 w-4" /></span>
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                {busy === 'trash' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              </span>
               <span>
                 <span className="block text-sm font-semibold text-slate-950">{busy === 'trash' ? 'Moving to Trash...' : 'Delete biasa / Move to Trash'}</span>
                 <span className="mt-1 block text-xs leading-5 text-slate-500">File disembunyikan dari My Files, tapi masih bisa dipulihkan dari menu Trash.</span>
@@ -2046,13 +2071,33 @@ function DeleteFileDialog({
             className="w-full rounded-lg border border-red-200 bg-red-50 p-4 text-left hover:bg-red-100 disabled:opacity-60"
           >
             <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-red-700"><XCircle className="h-4 w-4" /></span>
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-red-700">
+                {busy === 'permanent' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+              </span>
               <span>
                 <span className="block text-sm font-semibold text-red-800">{busy === 'permanent' ? 'Deleting permanently...' : 'Delete permanen sekarang'}</span>
                 <span className="mt-1 block text-xs leading-5 text-red-700">Lewati Trash. Metadata D1 dihapus dan message Telegram original/preview/thumbnail akan dicoba dihapus.</span>
               </span>
             </div>
           </button>
+
+          {busy && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-blue-950">{busyLabel}</p>
+                  <p className="mt-0.5 truncate text-xs text-blue-700">{progress.label}</p>
+                </div>
+                <span className="shrink-0 text-xs font-semibold text-blue-800">{Math.round(progress.progress)}%</span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, progress.progress))}%` }} />
+              </div>
+              <p className="mt-2 text-xs leading-5 text-blue-700">
+                Jangan tutup halaman sampai proses selesai. Untuk permanent delete, Telegram original/preview/thumbnail diproses dari server.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end border-t border-border px-5 py-3">

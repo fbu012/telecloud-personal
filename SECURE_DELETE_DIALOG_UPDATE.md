@@ -40,3 +40,22 @@ Bot Telegram harus menjadi admin channel dan punya izin delete message agar peng
 ## Migration
 
 Tidak ada migration baru.
+
+
+## Delete progress
+
+Dialog delete file sekarang menampilkan progress bar, persentase, dan stage label saat proses penghapusan berlangsung.
+
+```txt
+Checking secure folder access
+Moving file to Trash
+Deleting permanently from D1 and Telegram
+Refreshing file list
+Delete complete
+```
+
+Lihat juga:
+
+```txt
+DELETE_PROGRESS_UPDATE.md
+```
