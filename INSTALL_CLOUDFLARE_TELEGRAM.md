@@ -985,3 +985,19 @@ Lihat panduan lengkap:
 ```txt
 LOCAL_AGENT_GUIDE.md
 ```
+
+
+### Cek Online Auth Local Agent
+
+Di dashboard lokal, pastikan status berikut hijau:
+
+```txt
+Online config
+Online auth
+Bot token
+Original channel
+Preview channel
+Thumbnail channel
+```
+
+Jika `Online config` hijau tetapi `Online auth` merah, token `.env.agent` dan secret Cloudflare tidak sama atau belum redeploy.

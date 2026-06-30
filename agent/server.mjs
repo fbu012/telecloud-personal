@@ -12,13 +12,13 @@ import path from 'node:path';
 dotenv.config({ path: '.env.agent', override: true, quiet: true });
 
 const PORT = Number(process.env.LOCAL_AGENT_PORT || 8788);
-const TELECLOUD_BASE_URL = (process.env.TELECLOUD_BASE_URL || '').replace(/\/$/, '');
-const LOCAL_AGENT_TOKEN = process.env.LOCAL_AGENT_TOKEN || '';
-const BOT_TOKEN = process.env.BOT_TOKEN || '';
-const TELEGRAM_API_BASE = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/$/, '');
-const ORIGINAL_CHAT_ID = process.env.TELEGRAM_ORIGINAL_CHAT_ID || process.env.TELEGRAM_CHAT_ID || '';
-const PREVIEW_CHAT_ID = process.env.TELEGRAM_PREVIEW_CHAT_ID || ORIGINAL_CHAT_ID;
-const THUMBNAIL_CHAT_ID = process.env.TELEGRAM_THUMBNAIL_CHAT_ID || ORIGINAL_CHAT_ID;
+const TELECLOUD_BASE_URL = (process.env.TELECLOUD_BASE_URL || '').trim().replace(/\/$/, '');
+const LOCAL_AGENT_TOKEN = (process.env.LOCAL_AGENT_TOKEN || '').trim();
+const BOT_TOKEN = (process.env.BOT_TOKEN || '').trim();
+const TELEGRAM_API_BASE = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').trim().replace(/\/$/, '');
+const ORIGINAL_CHAT_ID = (process.env.TELEGRAM_ORIGINAL_CHAT_ID || process.env.TELEGRAM_CHAT_ID || '').trim();
+const PREVIEW_CHAT_ID = (process.env.TELEGRAM_PREVIEW_CHAT_ID || ORIGINAL_CHAT_ID).trim();
+const THUMBNAIL_CHAT_ID = (process.env.TELEGRAM_THUMBNAIL_CHAT_ID || ORIGINAL_CHAT_ID).trim();
 const MAX_FILE_MB = Number(process.env.LOCAL_AGENT_MAX_FILE_MB || 2048);
 const ROOT_DIR = process.cwd();
 const DATA_DIR = path.join(ROOT_DIR, 'agent', '.data');
@@ -37,11 +37,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/status') {
+      const onlineCheck = await checkOnlineAuth();
       return sendJson(res, 200, {
         ok: true,
         port: PORT,
         telecloud_base_url: TELECLOUD_BASE_URL,
         online_configured: Boolean(TELECLOUD_BASE_URL && LOCAL_AGENT_TOKEN),
+        online_auth_ok: onlineCheck.ok,
+        online_auth_error: onlineCheck.error,
         bot_token_configured: Boolean(BOT_TOKEN),
         original_channel_configured: Boolean(ORIGINAL_CHAT_ID),
         preview_channel_configured: Boolean(PREVIEW_CHAT_ID),
@@ -66,7 +69,7 @@ const server = http.createServer(async (req, res) => {
 
     return sendJson(res, 404, { ok: false, error: 'Not found' });
   } catch (err) {
-    console.error(err);
+    console.error(err instanceof Error ? err.message : err);
     return sendJson(res, 500, {
       ok: false,
       error: err instanceof Error ? err.message : 'Local agent error',
@@ -285,12 +288,29 @@ function postMultipart(urlString, form) {
   });
 }
 
+async function checkOnlineAuth() {
+  if (!TELECLOUD_BASE_URL || !LOCAL_AGENT_TOKEN) {
+    return { ok: false, error: 'TELECLOUD_BASE_URL / LOCAL_AGENT_TOKEN belum lengkap' };
+  }
+
+  try {
+    await callOnlineJson('/api/local-agent/ping');
+    return { ok: true, error: null };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Online auth failed',
+    };
+  }
+}
+
 async function callOnlineJson(pathname, options = {}) {
   if (!TELECLOUD_BASE_URL) throw new Error('TELECLOUD_BASE_URL belum dikonfigurasi');
   const response = await fetch(`${TELECLOUD_BASE_URL}${pathname}`, {
     method: options.method || 'GET',
     headers: {
       authorization: `Bearer ${LOCAL_AGENT_TOKEN}`,
+      'x-local-agent-token': LOCAL_AGENT_TOKEN,
       'content-type': 'application/json',
       ...(options.headers || {}),
     },
@@ -385,44 +405,176 @@ function dashboardHtml() {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TeleCloud Local Agent</title>
   <style>
-    :root { --primary:#2563eb; --border:#dbe3ef; --muted:#64748b; --bg:#f6f8fb; --text:#0f172a; }
+    :root {
+      --primary:#2563EB;
+      --primary-dark:#1D4ED8;
+      --border:#D8E1EE;
+      --muted:#64748B;
+      --bg:#F6F8FB;
+      --text:#0F172A;
+      --danger:#DC2626;
+      --success:#15803D;
+      --warning:#B45309;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
-    header { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.94); backdrop-filter: blur(10px); }
-    .wrap { max-width: 1120px; margin: 0 auto; padding: 18px; }
-    .brand { display:flex; align-items:center; gap:12px; }
-    .logo { width:40px; height:40px; border-radius:12px; background: var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-weight:800; }
-    h1 { font-size: 20px; margin: 0; }
-    p { margin: 0; }
-    .muted { color: var(--muted); }
-    .grid { display:grid; grid-template-columns: 1.1fr .9fr; gap: 16px; margin-top: 18px; }
-    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
-    .card { border:1px solid var(--border); border-radius:16px; background:white; box-shadow: 0 1px 3px rgba(15,23,42,.05); overflow:hidden; }
-    .card h2 { font-size: 16px; margin:0; }
-    .card-head { padding:16px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; }
-    .card-body { padding:18px; }
-    label { display:block; font-size: 12px; font-weight:700; text-transform: uppercase; letter-spacing:.04em; color:#475569; margin-bottom:8px; }
-    input, select { width:100%; border:1px solid var(--border); border-radius:12px; padding:12px; font:inherit; outline:none; background:white; }
-    input:focus, select:focus { border-color: var(--primary); }
-    .row { display:grid; gap:14px; }
+    html, body { min-height:100%; }
+    body {
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size:14px;
+      background:var(--bg);
+      color:var(--text);
+    }
+    button, input, select { font: inherit; }
+    header {
+      position:sticky;
+      top:0;
+      z-index:10;
+      border-bottom:1px solid var(--border);
+      background:rgba(255,255,255,.96);
+      backdrop-filter: blur(10px);
+    }
+    .wrap { max-width:1500px; margin:0 auto; padding:18px 24px; }
+    .brand { display:flex; align-items:center; gap:14px; }
+    .logo {
+      width:44px; height:44px; border-radius:12px;
+      background:var(--primary); color:white;
+      display:flex; align-items:center; justify-content:center;
+      font-size:18px; font-weight:800;
+      box-shadow:0 8px 18px rgba(37,99,235,.18);
+    }
+    h1 { margin:0; font-size:20px; line-height:1.2; font-weight:750; letter-spacing:-.02em; }
+    h2 { margin:0; font-size:16px; font-weight:700; letter-spacing:-.01em; }
+    p { margin:0; }
+    .muted { color:var(--muted); }
+    .main-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr); gap:18px; margin-top:18px; }
+    @media (max-width: 980px) {
+      .wrap { padding:14px; }
+      .main-grid { grid-template-columns:1fr; }
+    }
+    .card {
+      overflow:hidden;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:white;
+      box-shadow:0 1px 3px rgba(15,23,42,.05);
+    }
+    .card-head {
+      padding:18px 20px;
+      border-bottom:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+    }
+    .card-body { padding:18px 20px 20px; }
+    .stack { display:grid; gap:14px; }
+    label {
+      display:block; margin-bottom:8px;
+      font-size:12px; font-weight:700;
+      text-transform:uppercase; letter-spacing:.04em;
+      color:#526984;
+    }
+    select, .file-box {
+      width:100%;
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:white;
+      padding:11px 12px;
+      color:var(--text);
+      outline:none;
+    }
+    select:focus, .file-box:focus-within { border-color:var(--primary); box-shadow:0 0 0 3px rgba(37,99,235,.08); }
+    .file-box { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:46px; }
+    .hidden-input { display:none; }
     .btns { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
-    button { border:1px solid var(--border); border-radius:12px; background:white; color:#334155; padding:11px 14px; font-weight:700; cursor:pointer; }
-    button.primary { background: var(--primary); color:white; border-color: var(--primary); }
-    button:disabled { opacity:.55; cursor:not-allowed; }
-    .status { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; }
-    .pill { border:1px solid var(--border); border-radius:12px; padding:12px; background:#f8fafc; }
-    .pill b { display:block; font-size:12px; text-transform:uppercase; color:#64748b; letter-spacing:.04em; }
-    .pill span { display:block; margin-top:6px; font-weight:800; }
-    .ok { color:#15803d; }
-    .bad { color:#b91c1c; }
-    .progress { margin-top:16px; border:1px solid #bfdbfe; border-radius:14px; background:#eff6ff; padding:14px; display:none; }
-    .bar { height:9px; border-radius:999px; background:white; overflow:hidden; margin-top:10px; }
-    .bar > div { height:100%; width:0%; background:var(--primary); transition:width .2s ease; }
-    .log { margin-top:16px; border-radius:14px; background:#0f172a; color:#e2e8f0; padding:14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; min-height:130px; max-height:280px; overflow:auto; white-space:pre-wrap; }
+    button {
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:white;
+      color:#334155;
+      padding:10px 13px;
+      font-weight:650;
+      cursor:pointer;
+      transition:background .15s, border-color .15s, color .15s, transform .15s;
+    }
+    button:hover { background:#F8FAFC; }
+    button.primary { background:var(--primary); border-color:var(--primary); color:white; }
+    button.primary:hover { background:var(--primary-dark); }
+    button:disabled { opacity:.55; cursor:not-allowed; transform:none; }
+    .status { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    @media (max-width: 520px) { .status { grid-template-columns:1fr; } }
+    .pill {
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#F8FAFC;
+      padding:12px;
+      min-height:76px;
+    }
+    .pill b { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#64748B; }
+    .pill span { display:block; margin-top:7px; font-size:16px; font-weight:800; }
+    .ok { color:var(--success); }
+    .bad { color:var(--danger); }
+    .warn { color:var(--warning); }
+    .selected-list {
+      margin-top:10px;
+      display:grid;
+      gap:8px;
+      max-height:170px;
+      overflow:auto;
+    }
+    .file-chip {
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:#F8FAFC;
+      padding:9px 10px;
+      color:#334155;
+    }
+    .file-chip strong {
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      font-weight:650;
+    }
+    .file-chip small { color:#64748B; white-space:nowrap; }
+    .progress {
+      margin-top:16px;
+      border:1px solid #BFDBFE;
+      border-radius:12px;
+      background:#EFF6FF;
+      padding:14px;
+      display:none;
+    }
+    .bar { height:8px; border-radius:999px; background:white; overflow:hidden; margin-top:10px; }
+    .bar > div { height:100%; width:0%; background:var(--primary); transition:width .25s ease; }
+    .log {
+      margin-top:16px;
+      border-radius:12px;
+      background:#0F172A;
+      color:#E2E8F0;
+      padding:14px;
+      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size:12px;
+      line-height:1.55;
+      min-height:150px;
+      max-height:300px;
+      overflow:auto;
+      white-space:pre-wrap;
+    }
     .history { display:grid; gap:10px; }
-    .hist-item { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fff; }
-    .hist-item b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .hist-item small { color:#64748b; }
+    .hist-item { border:1px solid var(--border); border-radius:12px; padding:12px; background:white; }
+    .hist-item b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+    .hist-item small { color:#64748B; }
+    code { border-radius:6px; background:#F1F5F9; padding:2px 5px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+    .notice {
+      display:none;
+      margin-top:12px;
+      border-radius:12px;
+      border:1px solid #FCD34D;
+      background:#FFFBEB;
+      color:#92400E;
+      padding:12px;
+      line-height:1.6;
+    }
   </style>
 </head>
 <body>
@@ -437,7 +589,7 @@ function dashboardHtml() {
   </header>
 
   <main class="wrap">
-    <div class="grid">
+    <div class="main-grid">
       <section class="card">
         <div class="card-head">
           <div>
@@ -446,30 +598,42 @@ function dashboardHtml() {
           </div>
           <button id="refreshFolders">Refresh folders</button>
         </div>
+
         <div class="card-body">
-          <div class="row">
+          <div class="stack">
             <div>
               <label>Folder tujuan online</label>
               <select id="folder"></select>
+              <div id="folderNotice" class="notice"></div>
             </div>
+
             <div>
-              <label>File</label>
-              <input id="file" type="file" />
+              <label>Files</label>
+              <div class="file-box">
+                <span id="fileSummary" class="muted">Belum ada file dipilih</span>
+                <button type="button" id="pickFiles">Choose files</button>
+                <input id="file" class="hidden-input" type="file" multiple />
+              </div>
+              <div id="selectedFiles" class="selected-list"></div>
             </div>
           </div>
 
           <div class="btns">
             <button class="primary" id="upload">Start local upload</button>
+            <button id="clearSelection">Clear files</button>
             <button id="clear">Clear log</button>
           </div>
 
           <div id="progress" class="progress">
             <div style="display:flex;justify-content:space-between;gap:12px">
-              <strong id="stage">Preparing...</strong>
-              <span id="pct">0%</span>
+              <div style="min-width:0">
+                <strong id="stage">Preparing...</strong>
+                <p id="subStage" class="muted" style="margin-top:2px;font-size:12px"></p>
+              </div>
+              <span id="pct" style="font-weight:750;color:#1E40AF">0%</span>
             </div>
             <div class="bar"><div id="bar"></div></div>
-            <p class="muted" style="margin-top:10px;font-size:13px">Jangan tutup halaman sampai proses selesai.</p>
+            <p class="muted" style="margin-top:10px;font-size:12px">Jangan tutup halaman sampai proses selesai.</p>
           </div>
 
           <div id="log" class="log">Ready.</div>
@@ -483,11 +647,12 @@ function dashboardHtml() {
         </div>
         <div class="card-body">
           <div id="status" class="status"></div>
+          <div id="authNotice" class="notice"></div>
         </div>
       </aside>
     </div>
 
-    <section class="card" style="margin-top:16px">
+    <section class="card" style="margin-top:18px">
       <div class="card-head">
         <h2>Recent uploads</h2>
         <button id="refreshHistory">Refresh history</button>
@@ -501,6 +666,7 @@ function dashboardHtml() {
 <script>
 const $ = (id) => document.getElementById(id);
 let folders = [];
+let selectedFiles = [];
 
 function log(message) {
   const now = new Date().toLocaleTimeString();
@@ -508,34 +674,65 @@ function log(message) {
   $('log').scrollTop = $('log').scrollHeight;
 }
 
-function setProgress(label, value) {
+function setProgress(label, value, subLabel = '') {
   $('progress').style.display = 'block';
   $('stage').textContent = label;
+  $('subStage').textContent = subLabel;
   $('pct').textContent = Math.round(value) + '%';
   $('bar').style.width = Math.max(0, Math.min(100, value)) + '%';
+}
+
+function showNotice(id, message) {
+  const el = $(id);
+  if (!message) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  el.style.display = 'block';
+  el.textContent = message;
 }
 
 async function loadStatus() {
   const data = await fetch('/api/status').then(r => r.json());
   const entries = [
-    ['Online API', data.online_configured],
-    ['Bot token', data.bot_token_configured],
-    ['Original channel', data.original_channel_configured],
-    ['Preview channel', data.preview_channel_configured],
-    ['Thumbnail channel', data.thumbnail_channel_configured],
-    ['Max file', data.max_file_mb + ' MB'],
+    ['Online config', data.online_configured, true],
+    ['Online auth', data.online_auth_ok, true],
+    ['Bot token', data.bot_token_configured, true],
+    ['Original channel', data.original_channel_configured, true],
+    ['Preview channel', data.preview_channel_configured, true],
+    ['Thumbnail channel', data.thumbnail_channel_configured, true],
+    ['Max file', data.max_file_mb + ' MB', false],
   ];
-  $('status').innerHTML = entries.map(([label, value]) => {
-    const bool = typeof value === 'boolean';
+  $('status').innerHTML = entries.map(([label, value, bool]) => {
     return '<div class="pill"><b>' + label + '</b><span class="' + (bool ? (value ? 'ok' : 'bad') : '') + '">' + (bool ? (value ? 'Configured' : 'Missing') : value) + '</span></div>';
   }).join('');
+
+  if (!data.online_auth_ok) {
+    showNotice('authNotice', 'Online auth gagal: ' + (data.online_auth_error || 'Unauthorized') + '. Pastikan LOCAL_AGENT_TOKEN di .env.agent sama persis dengan secret Cloudflare, lalu redeploy online.');
+  } else {
+    showNotice('authNotice', '');
+  }
 }
 
 async function loadFolders() {
+  showNotice('folderNotice', '');
   $('folder').innerHTML = '<option value="">Loading...</option>';
-  const data = await fetch('/api/folders').then(r => r.json());
-  folders = data.folders || [];
-  $('folder').innerHTML = '<option value="">Root</option>' + folders.map(folder => '<option value="' + folder.id + '">' + escapeHtml(folder.name) + (folder.is_secure ? ' 🔒' : '') + '</option>').join('');
+  try {
+    const data = await fetch('/api/folders').then(async r => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.ok === false) throw new Error(body.error || 'Gagal mengambil folders');
+      return body;
+    });
+    folders = data.folders || [];
+    $('folder').innerHTML = '<option value="">Root</option>' + folders.map(folder => '<option value="' + folder.id + '">' + escapeHtml(folder.name) + (folder.is_secure ? ' 🔒' : '') + '</option>').join('');
+    log('Folders loaded: ' + folders.length);
+  } catch (err) {
+    $('folder').innerHTML = '<option value="">Root</option>';
+    const message = err && err.message ? err.message : String(err);
+    showNotice('folderNotice', 'Folder online gagal dimuat: ' + message + '. Cek LOCAL_AGENT_TOKEN dan redeploy online.');
+    log('Folders error: ' + message);
+  }
 }
 
 async function loadHistory() {
@@ -546,55 +743,90 @@ async function loadHistory() {
   )).join('') : '<p class="muted">No local uploads yet.</p>';
 }
 
-async function upload() {
-  const file = $('file').files[0];
-  if (!file) {
+function renderSelectedFiles() {
+  if (!selectedFiles.length) {
+    $('fileSummary').textContent = 'Belum ada file dipilih';
+    $('selectedFiles').innerHTML = '';
+    return;
+  }
+
+  const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+  $('fileSummary').textContent = selectedFiles.length + ' file dipilih · ' + formatBytes(total);
+  $('selectedFiles').innerHTML = selectedFiles.map((file, index) => (
+    '<div class="file-chip"><strong title="' + escapeHtml(file.name) + '">' + escapeHtml(file.name) + '</strong><small>' + formatBytes(file.size) + '</small></div>'
+  )).join('');
+}
+
+async function uploadAll() {
+  if (!selectedFiles.length) {
     alert('Pilih file dulu.');
     return;
   }
 
   $('upload').disabled = true;
+  $('pickFiles').disabled = true;
+  $('refreshFolders').disabled = true;
   $('progress').style.display = 'block';
-  $('log').textContent = 'Starting upload...';
-  setProgress('Preparing file...', 5);
+  $('log').textContent = 'Starting multi upload...';
 
-  try {
-    const form = new FormData();
-    form.append('folder_id', $('folder').value || '');
-    form.append('file', file, file.name);
+  let success = 0;
+  let failed = 0;
 
-    if (file.type.startsWith('image/')) {
-      setProgress('Creating thumbnail in browser...', 12);
-      const thumbnail = await createImageVariant(file, 240, .72, 'thumbnail');
-      if (thumbnail) form.append('thumbnail_file', thumbnail, thumbnail.name);
+  for (let index = 0; index < selectedFiles.length; index += 1) {
+    const file = selectedFiles[index];
+    const base = (index / selectedFiles.length) * 100;
+    const span = 100 / selectedFiles.length;
 
-      setProgress('Creating optimized preview in browser...', 22);
-      const preview = await createImageVariant(file, 1600, .82, 'preview');
-      if (preview) form.append('preview_file', preview, preview.name);
-      log('Image variants prepared.');
+    try {
+      await uploadOne(file, index + 1, selectedFiles.length, base, span);
+      success += 1;
+    } catch (err) {
+      failed += 1;
+      log('FAILED ' + file.name + ': ' + (err && err.message ? err.message : err));
     }
-
-    await uploadWithProgress(form);
-    setProgress('Complete', 100);
-    log('Upload complete. Refresh TeleCloud Online to see the file.');
-    await loadHistory();
-  } catch (err) {
-    setProgress('Failed', 0);
-    log('ERROR: ' + (err && err.message ? err.message : err));
-  } finally {
-    $('upload').disabled = false;
   }
+
+  setProgress('Multi upload complete', 100, success + ' sukses, ' + failed + ' gagal');
+  log('Done. Success: ' + success + ', failed: ' + failed + '. Refresh TeleCloud Online to see uploaded files.');
+  await loadHistory();
+
+  $('upload').disabled = false;
+  $('pickFiles').disabled = false;
+  $('refreshFolders').disabled = false;
 }
 
-function uploadWithProgress(form) {
+async function uploadOne(file, number, total, base, span) {
+  const label = '[' + number + '/' + total + '] ' + file.name;
+  setProgress('Preparing file...', base + span * .04, label);
+  log('Uploading ' + label);
+
+  const form = new FormData();
+  form.append('folder_id', $('folder').value || '');
+  form.append('file', file, file.name);
+
+  if (file.type.startsWith('image/')) {
+    setProgress('Creating thumbnail...', base + span * .12, label);
+    const thumbnail = await createImageVariant(file, 240, .72, 'thumbnail');
+    if (thumbnail) form.append('thumbnail_file', thumbnail, thumbnail.name);
+
+    setProgress('Creating optimized preview...', base + span * .22, label);
+    const preview = await createImageVariant(file, 1600, .82, 'preview');
+    if (preview) form.append('preview_file', preview, preview.name);
+  }
+
+  await uploadWithProgress(form, base, span, label);
+  setProgress('File complete', base + span, label);
+}
+
+function uploadWithProgress(form, base, span, label) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/upload');
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
-      const pct = 25 + (event.loaded / event.total) * 45;
-      setProgress('Sending file to local agent...', pct);
+      const pct = base + span * (.25 + (event.loaded / event.total) * .35);
+      setProgress('Sending file to local agent...', pct, label);
     };
 
     xhr.onload = () => {
@@ -604,13 +836,13 @@ function uploadWithProgress(form) {
         reject(new Error(data?.error || 'Upload failed'));
         return;
       }
-      setProgress('Local agent synced metadata online...', 94);
+      setProgress('Syncing metadata online...', base + span * .92, label);
       log(JSON.stringify(data, null, 2));
       resolve(data);
     };
 
     xhr.onerror = () => reject(new Error('Network error to local agent'));
-    setProgress('Uploading to Telegram and syncing metadata...', 72);
+    setProgress('Uploading to Telegram...', base + span * .65, label);
     xhr.send(form);
   });
 }
@@ -633,7 +865,7 @@ async function createImageVariant(file, maxSide, quality, suffix) {
     const name = dot > 0 ? file.name.slice(0, dot) + '.' + suffix + '.jpg' : file.name + '.' + suffix + '.jpg';
     return new File([blob], name, { type: 'image/jpeg' });
   } catch (err) {
-    log('Image variant failed: ' + err.message);
+    log('Image variant failed for ' + file.name + ': ' + err.message);
     return null;
   }
 }
@@ -651,7 +883,17 @@ function formatBytes(bytes) {
   return value.toFixed(value >= 10 || index === 0 ? 0 : 1) + ' ' + units[index];
 }
 
-$('upload').addEventListener('click', upload);
+$('pickFiles').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', () => {
+  selectedFiles = Array.from($('file').files || []);
+  renderSelectedFiles();
+});
+$('upload').addEventListener('click', uploadAll);
+$('clearSelection').addEventListener('click', () => {
+  $('file').value = '';
+  selectedFiles = [];
+  renderSelectedFiles();
+});
 $('clear').addEventListener('click', () => $('log').textContent = 'Ready.');
 $('refreshStatus').addEventListener('click', loadStatus);
 $('refreshFolders').addEventListener('click', loadFolders);

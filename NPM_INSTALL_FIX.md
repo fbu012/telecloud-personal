@@ -17,3 +17,5 @@ npm install --registry=https://registry.npmjs.org/
 ```
 
 Patch ZIP ini sudah tidak menyertakan `package-lock.json`, supaya `npm install` membuat lockfile baru memakai registry publik.
+
+Patch ini tetap tidak menyertakan `package-lock.json` agar install memakai registry publik.

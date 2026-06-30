@@ -226,3 +226,59 @@ API online belum redeploy
 folder_id tujuan tidak ditemukan
 migration 0005 belum jalan
 ```
+
+
+## Update: auth check dan multi upload
+
+Local Agent dashboard sekarang mendukung:
+
+```txt
+- Multi upload
+- UI/font lebih selaras dengan TeleCloud Online
+- Online Auth status
+- Error folder yang lebih jelas jika token salah
+```
+
+Jika Status menampilkan:
+
+```txt
+Online config: Configured
+Online auth: Missing
+```
+
+artinya `.env.agent` sudah berisi token, tapi token tersebut **tidak cocok** dengan secret Cloudflare atau online belum redeploy.
+
+Perbaikan:
+
+```powershell
+npx wrangler pages secret put LOCAL_AGENT_TOKEN --project-name=telecloud-personal
+npm run build
+npx wrangler pages deploy dist --project-name=telecloud-personal --branch=main
+```
+
+Lalu pastikan `.env.agent` di komputer lokal memakai token yang sama persis:
+
+```env
+LOCAL_AGENT_TOKEN=token-yang-sama-persis
+```
+
+Restart local agent:
+
+```powershell
+Ctrl+C
+npm run agent
+```
+
+## Multi upload
+
+Dashboard lokal sekarang memakai input multiple files.
+
+Alur:
+
+```txt
+1. Klik Choose files
+2. Pilih banyak file
+3. Klik Start local upload
+4. File diproses satu per satu
+5. Progress bar menunjukkan total progress semua file
+```

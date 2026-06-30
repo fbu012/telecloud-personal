@@ -25,7 +25,7 @@ Stack awal:
 - Dokumentasi migrasi ke Local Bot API Server
 - Image variants: thumbnail untuk list/grid, optimized preview untuk lightbox, original untuk download
 - Trash menu dengan restore, permanent delete, empty trash, dan auto-delete retention
-- Local Agent dashboard untuk upload file besar dari komputer lokal dan sync metadata ke online
+- Local Agent dashboard untuk upload file besar/multi upload dari komputer lokal dan sync metadata ke online
 
 ## Batas awal
 
@@ -229,3 +229,14 @@ Lihat detail:
 ```txt
 LOCAL_AGENT_GUIDE.md
 ```
+
+
+## Local Agent troubleshooting
+
+Jika folder online tidak muncul di Local Agent dan terminal menampilkan `Unauthorized`, cek status:
+
+```txt
+Online Auth
+```
+
+Jika gagal, berarti `LOCAL_AGENT_TOKEN` di `.env.agent` tidak sama dengan secret Cloudflare, atau online belum redeploy setelah secret dibuat.
