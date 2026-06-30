@@ -372,3 +372,31 @@ npx wrangler pages deploy dist --project-name=telecloud-personal --branch=main
 # restart local agent
 npm run agent
 ```
+
+
+## Update: middleware bypass Local Agent
+
+Jika test:
+
+```powershell
+Invoke-RestMethod "https://file.utamadigital.id/api/local-agent/audit?agent_token=$encoded"
+```
+
+menghasilkan:
+
+```json
+{
+  "ok": false,
+  "error": "Unauthorized"
+}
+```
+
+penyebabnya adalah middleware global TeleCloud masih meminta cookie login admin sebelum request sampai ke route Local Agent.
+
+Patch ini memperbaiki `functions/_middleware.ts` agar route berikut tidak memakai cookie web admin:
+
+```txt
+/api/local-agent/*
+```
+
+Route Local Agent tetap aman karena memakai `LOCAL_AGENT_TOKEN` di masing-masing endpoint.

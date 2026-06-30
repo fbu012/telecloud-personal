@@ -257,3 +257,8 @@ Cloud fingerprint
 ```
 
 Kalau berbeda, berarti secret Cloudflare production yang aktif belum sama dengan `.env.agent`, atau belum redeploy setelah update secret.
+
+
+## Local Agent middleware fix
+
+Route `/api/local-agent/*` sekarang dilewatkan dari middleware login admin, karena auth-nya memakai `LOCAL_AGENT_TOKEN`, bukan cookie browser. Ini memperbaiki kasus audit/folders selalu `Unauthorized` walaupun token sudah benar.
