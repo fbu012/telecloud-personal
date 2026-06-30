@@ -93,6 +93,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const id = url.searchParams.get('id');
   const hard = url.searchParams.get('hard') === 'true';
+  const deleteTelegram = url.searchParams.get('delete_telegram') === 'true' || env.DELETE_TELEGRAM_ON_HARD_DELETE === 'true';
   if (!id) return errorJson('Query `id` wajib diisi', 400);
 
   const file = await env.DB.prepare('SELECT * FROM files WHERE id = ? LIMIT 1').bind(id).first<FileRow>();
@@ -102,7 +103,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
   if (locked) return locked;
 
   if (hard) {
-    const telegramResult = env.DELETE_TELEGRAM_ON_HARD_DELETE === 'true' ? await deleteTelegramMessagesForFile(env, file) : { deleted: 0, failed: 0 };
+    const telegramResult = deleteTelegram ? await deleteTelegramMessagesForFile(env, file) : { deleted: 0, failed: 0 };
 
     await env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run();
     await logEvent(env, 'file_hard_deleted', 'File hard deleted', { id, original_name: file.original_name, telegram: telegramResult });

@@ -88,3 +88,19 @@ npx wrangler d1 execute telecloud_personal_db --remote --file=migrations/0005_te
 ```
 
 Kalau migration `0005` sudah dijalankan, tidak perlu menjalankan migration tambahan.
+
+
+## Secure folder delete dialog
+
+File di dalam secure folder sekarang bisa dihapus dengan dialog pilihan:
+
+```txt
+Delete biasa / Move to Trash
+Delete permanen sekarang
+```
+
+Jika folder token expired, aplikasi akan meminta password folder lagi dan retry action. Lihat juga:
+
+```txt
+SECURE_DELETE_DIALOG_UPDATE.md
+```

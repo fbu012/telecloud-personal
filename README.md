@@ -158,3 +158,19 @@ Lihat juga:
 ```txt
 TRASH_MANAGEMENT_UPDATE.md
 ```
+
+
+## Secure folder delete dialog
+
+File di dalam secure folder sekarang bisa dihapus dengan dialog pilihan:
+
+```txt
+Delete biasa / Move to Trash
+Delete permanen sekarang
+```
+
+Jika folder token expired, aplikasi akan meminta password folder lagi dan retry action. Lihat juga:
+
+```txt
+SECURE_DELETE_DIALOG_UPDATE.md
+```

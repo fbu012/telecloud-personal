@@ -193,12 +193,24 @@ export async function updateFile(
   return data.file;
 }
 
-export async function deleteFile(id: string, hard = false): Promise<void> {
-  const response = await fetch(`/api/files/item?id=${encodeURIComponent(id)}&hard=${hard ? 'true' : 'false'}`, {
+export async function deleteFile(
+  id: string,
+  hard = false,
+  folderToken: string | null = null,
+  deleteTelegram = false,
+): Promise<{ trashed?: boolean; hard_deleted?: boolean; telegram?: { deleted: number; failed: number } }> {
+  const url = new URL('/api/files/item', window.location.origin);
+  url.searchParams.set('id', id);
+  url.searchParams.set('hard', hard ? 'true' : 'false');
+  if (folderToken) url.searchParams.set('folder_token', folderToken);
+  if (deleteTelegram) url.searchParams.set('delete_telegram', 'true');
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
     method: 'DELETE',
     credentials: 'include',
   });
-  await parseJson(response);
+  const data = await parseJson<{ ok: true; trashed?: boolean; hard_deleted?: boolean; telegram?: { deleted: number; failed: number } }>(response);
+  return data;
 }
 
 export function getDownloadUrl(id: string, folderToken?: string | null): string {
@@ -244,9 +256,12 @@ function getActiveFolderToken(): string | null {
 export async function bulkFileAction(
   action: 'move' | 'delete' | 'copy',
   ids: string[],
-  options: { folder_id?: string | null } = {},
+  options: { folder_id?: string | null; folder_token?: string | null } = {},
 ): Promise<{ files?: StoredFile[]; count: number }> {
-  const response = await fetch('/api/files/bulk', {
+  const url = new URL('/api/files/bulk', window.location.origin);
+  if (options.folder_token) url.searchParams.set('folder_token', options.folder_token);
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json' },

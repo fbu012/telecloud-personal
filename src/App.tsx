@@ -232,6 +232,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<StoredFile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StoredFile | null>(null);
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [unlockTarget, setUnlockTarget] = useState<FolderItem | null>(null);
   const [folderTokens, setFolderTokens] = useState<Record<string, string>>({});
@@ -401,15 +402,91 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     }
   }
 
-  async function removeFile(file: StoredFile) {
-    if (!window.confirm(`Pindahkan "${file.original_name}" ke trash?`)) return;
+  function removeFile(file: StoredFile) {
+    setDeleteTarget(file);
+  }
+
+  async function performFileDelete(file: StoredFile, hard: boolean) {
+    let folderToken = await getFolderTokenForFileAction(file, hard ? 'hapus permanen' : 'pindahkan ke trash');
+    if (folderToken === 'cancelled') return;
+
     try {
-      await deleteFile(file.id, false);
+      const result = await deleteFile(file.id, hard, folderToken, hard);
+      setDeleteTarget(null);
       setFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setTrashFiles((prev) => prev.filter((item) => item.id !== file.id));
       if (selected?.id === file.id) setSelected(null);
+      if (lightboxFileId === file.id) setLightboxFileId(null);
+
+      if (hard) {
+        const telegram = result.telegram;
+        setNotice(`File dihapus permanen${telegram ? ` · Telegram deleted ${telegram.deleted}, failed ${telegram.failed}` : ''}`);
+      } else {
+        setNotice(`File "${file.original_name}" dipindahkan ke Trash`);
+      }
+      await refresh();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 423 && file.folder_id) {
+        const retryToken = await promptAndUnlockFolderForFile(file, hard ? 'hapus permanen' : 'pindahkan ke trash');
+        if (!retryToken) return;
+
+        try {
+          const result = await deleteFile(file.id, hard, retryToken, hard);
+          setDeleteTarget(null);
+          setFiles((prev) => prev.filter((item) => item.id !== file.id));
+          setTrashFiles((prev) => prev.filter((item) => item.id !== file.id));
+          if (selected?.id === file.id) setSelected(null);
+          if (lightboxFileId === file.id) setLightboxFileId(null);
+          if (hard) {
+            const telegram = result.telegram;
+            setNotice(`File dihapus permanen${telegram ? ` · Telegram deleted ${telegram.deleted}, failed ${telegram.failed}` : ''}`);
+          } else {
+            setNotice(`File "${file.original_name}" dipindahkan ke Trash`);
+          }
+          await refresh();
+          return;
+        } catch (retryErr) {
+          setNotice(retryErr instanceof Error ? retryErr.message : 'Gagal menghapus file');
+          return;
+        }
+      }
+
       setNotice(err instanceof Error ? err.message : 'Gagal menghapus file');
     }
+  }
+
+  async function getFolderTokenForFileAction(file: StoredFile, actionLabel: string): Promise<string | null | 'cancelled'> {
+    if (!file.folder_id) return null;
+
+    const existing = folderTokens[file.folder_id] || (file.folder_id === currentFolderId ? currentFolderToken : null);
+    if (existing) return existing;
+
+    const folder = folders.find((item) => item.id === file.folder_id);
+    if (!folder?.is_secure) return null;
+
+    const token = await promptAndUnlockFolderForFile(file, actionLabel);
+    return token || 'cancelled';
+  }
+
+  async function promptAndUnlockFolderForFile(file: StoredFile, actionLabel: string): Promise<string | null> {
+    if (!file.folder_id) return null;
+    const folder = folders.find((item) => item.id === file.folder_id);
+    const folderName = folder?.name || 'secure folder';
+    const password = window.prompt(`Password folder diperlukan untuk ${actionLabel}: "${folderName}"`);
+    if (!password) return null;
+
+    const token = await unlockFolder(file.folder_id, password);
+    setFolderTokens((prev) => ({ ...prev, [file.folder_id!]: token }));
+
+    if (file.folder_id === currentFolderId) {
+      try {
+        window.sessionStorage.setItem('telecloud_active_folder_token', token);
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    return token;
   }
 
   async function createFolderInCurrent() {
@@ -587,7 +664,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     setBulkBusy(true);
     try {
       const folderId = bulkTargetFolderId || null;
-      const result = await bulkFileAction(action, selectedIds, { folder_id: folderId });
+      const result = await bulkFileAction(action, selectedIds, { folder_id: folderId, folder_token: currentFolderToken });
       await refresh();
       setSelectedIds([]);
       if (action === 'delete') setNotice(`${result.count} file(s) moved to trash`);
@@ -839,6 +916,15 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
             setFiles((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
             setSelected(updated);
           }}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteFileDialog
+          file={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onMoveToTrash={() => performFileDelete(deleteTarget, false)}
+          onPermanentDelete={() => performFileDelete(deleteTarget, true)}
         />
       )}
 
@@ -1901,6 +1987,78 @@ function UnlockFolderModal({
           </div>
         </div>
       </form>
+    </div>
+  );
+}
+
+
+function DeleteFileDialog({
+  file,
+  onClose,
+  onMoveToTrash,
+  onPermanentDelete,
+}: {
+  file: StoredFile;
+  onClose: () => void;
+  onMoveToTrash: () => void;
+  onPermanentDelete: () => void;
+}) {
+  const [busy, setBusy] = useState<'trash' | 'permanent' | null>(null);
+
+  async function run(action: 'trash' | 'permanent') {
+    setBusy(action);
+    try {
+      if (action === 'trash') await onMoveToTrash();
+      else await onPermanentDelete();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-md rounded-lg border border-border bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-950">Delete file</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            Pilih cara menghapus <span className="font-semibold text-slate-800">"{file.original_name}"</span>.
+          </p>
+        </div>
+
+        <div className="space-y-3 p-5">
+          <button
+            onClick={() => run('trash')}
+            disabled={Boolean(busy)}
+            className="w-full rounded-lg border border-border bg-white p-4 text-left hover:bg-slate-50 disabled:opacity-60"
+          >
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><Trash2 className="h-4 w-4" /></span>
+              <span>
+                <span className="block text-sm font-semibold text-slate-950">{busy === 'trash' ? 'Moving to Trash...' : 'Delete biasa / Move to Trash'}</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-500">File disembunyikan dari My Files, tapi masih bisa dipulihkan dari menu Trash.</span>
+              </span>
+            </div>
+          </button>
+
+          <button
+            onClick={() => run('permanent')}
+            disabled={Boolean(busy)}
+            className="w-full rounded-lg border border-red-200 bg-red-50 p-4 text-left hover:bg-red-100 disabled:opacity-60"
+          >
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-red-700"><XCircle className="h-4 w-4" /></span>
+              <span>
+                <span className="block text-sm font-semibold text-red-800">{busy === 'permanent' ? 'Deleting permanently...' : 'Delete permanen sekarang'}</span>
+                <span className="mt-1 block text-xs leading-5 text-red-700">Lewati Trash. Metadata D1 dihapus dan message Telegram original/preview/thumbnail akan dicoba dihapus.</span>
+              </span>
+            </div>
+          </button>
+        </div>
+
+        <div className="flex justify-end border-t border-border px-5 py-3">
+          <button onClick={onClose} disabled={Boolean(busy)} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60">Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
