@@ -282,3 +282,49 @@ Alur:
 4. File diproses satu per satu
 5. Progress bar menunjukkan total progress semua file
 ```
+
+
+## Update: token normalizer dan style compact
+
+Patch ini memperbaiki Local Agent auth agar lebih toleran terhadap:
+
+```txt
+- spasi di awal/akhir token
+- token yang tidak sengaja diberi tanda kutip
+- Authorization header yang tidak diteruskan oleh edge/proxy tertentu
+```
+
+Local Agent sekarang mengirim token melalui 3 jalur:
+
+```txt
+Authorization: Bearer ...
+x-local-agent-token: ...
+?agent_token=...
+```
+
+Backend online juga menormalisasi token sebelum membandingkan.
+
+Dashboard lokal juga dibuat lebih compact agar font, spacing, kartu, tombol, dan input lebih mendekati TeleCloud Online.
+
+### Jika Online Auth masih Missing
+
+Jalankan ulang secret tanpa tanda kutip:
+
+```powershell
+npx wrangler pages secret put LOCAL_AGENT_TOKEN --project-name=telecloud-personal
+```
+
+Saat prompt muncul, paste token mentah saja:
+
+```txt
+tc_agent_random_panjang_123
+```
+
+Jangan masukkan:
+
+```txt
+"tc_agent_random_panjang_123"
+LOCAL_AGENT_TOKEN=tc_agent_random_panjang_123
+```
+
+Setelah itu redeploy online dan restart local agent.

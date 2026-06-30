@@ -1001,3 +1001,27 @@ Thumbnail channel
 ```
 
 Jika `Online config` hijau tetapi `Online auth` merah, token `.env.agent` dan secret Cloudflare tidak sama atau belum redeploy.
+
+
+### Catatan input LOCAL_AGENT_TOKEN
+
+Saat menjalankan:
+
+```powershell
+npx wrangler pages secret put LOCAL_AGENT_TOKEN --project-name=telecloud-personal
+```
+
+Masukkan nilai token saja, bukan format `.env`.
+
+Benar:
+
+```txt
+tc_agent_random_panjang_123
+```
+
+Salah:
+
+```txt
+LOCAL_AGENT_TOKEN=tc_agent_random_panjang_123
+"tc_agent_random_panjang_123"
+```

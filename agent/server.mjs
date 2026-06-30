@@ -45,6 +45,7 @@ const server = http.createServer(async (req, res) => {
         online_configured: Boolean(TELECLOUD_BASE_URL && LOCAL_AGENT_TOKEN),
         online_auth_ok: onlineCheck.ok,
         online_auth_error: onlineCheck.error,
+        local_agent_token_hint: tokenHint(LOCAL_AGENT_TOKEN),
         bot_token_configured: Boolean(BOT_TOKEN),
         original_channel_configured: Boolean(ORIGINAL_CHAT_ID),
         preview_channel_configured: Boolean(PREVIEW_CHAT_ID),
@@ -306,7 +307,9 @@ async function checkOnlineAuth() {
 
 async function callOnlineJson(pathname, options = {}) {
   if (!TELECLOUD_BASE_URL) throw new Error('TELECLOUD_BASE_URL belum dikonfigurasi');
-  const response = await fetch(`${TELECLOUD_BASE_URL}${pathname}`, {
+  const separator = pathname.includes('?') ? '&' : '?';
+  const authPath = `${pathname}${separator}agent_token=${encodeURIComponent(LOCAL_AGENT_TOKEN)}`;
+  const response = await fetch(`${TELECLOUD_BASE_URL}${authPath}`, {
     method: options.method || 'GET',
     headers: {
       authorization: `Bearer ${LOCAL_AGENT_TOKEN}`,
@@ -380,6 +383,13 @@ function summarizeTelegramUpload(upload) {
   };
 }
 
+function tokenHint(token) {
+  const normalized = String(token || '').trim();
+  if (!normalized) return 'empty';
+  if (normalized.length <= 8) return `${normalized.length} chars`;
+  return `${normalized.length} chars · starts ${normalized.slice(0, 4)} · ends ${normalized.slice(-4)}`;
+}
+
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -407,125 +417,236 @@ function dashboardHtml() {
   <style>
     :root {
       --primary:#2563EB;
-      --primary-dark:#1D4ED8;
+      --primary-hover:#1D4ED8;
       --border:#D8E1EE;
       --muted:#64748B;
       --bg:#F6F8FB;
       --text:#0F172A;
+      --panel:#FFFFFF;
+      --soft:#F8FAFC;
       --danger:#DC2626;
       --success:#15803D;
       --warning:#B45309;
     }
-    * { box-sizing: border-box; }
+    * { box-sizing:border-box; }
     html, body { min-height:100%; }
     body {
       margin:0;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size:14px;
       background:var(--bg);
       color:var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size:14px;
+      line-height:1.45;
+      -webkit-font-smoothing:antialiased;
+      text-rendering:geometricPrecision;
     }
-    button, input, select { font: inherit; }
+    button, input, select { font:inherit; }
     header {
       position:sticky;
       top:0;
-      z-index:10;
+      z-index:30;
       border-bottom:1px solid var(--border);
-      background:rgba(255,255,255,.96);
-      backdrop-filter: blur(10px);
+      background:rgba(255,255,255,.95);
+      backdrop-filter:blur(10px);
     }
-    .wrap { max-width:1500px; margin:0 auto; padding:18px 24px; }
-    .brand { display:flex; align-items:center; gap:14px; }
+    .wrap {
+      max-width:1500px;
+      margin:0 auto;
+      padding:14px 24px;
+    }
+    .brand {
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-height:52px;
+    }
     .logo {
-      width:44px; height:44px; border-radius:12px;
-      background:var(--primary); color:white;
-      display:flex; align-items:center; justify-content:center;
-      font-size:18px; font-weight:800;
-      box-shadow:0 8px 18px rgba(37,99,235,.18);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      width:36px;
+      height:36px;
+      border-radius:10px;
+      background:var(--primary);
+      color:white;
+      font-size:15px;
+      font-weight:800;
+      letter-spacing:-.02em;
     }
-    h1 { margin:0; font-size:20px; line-height:1.2; font-weight:750; letter-spacing:-.02em; }
-    h2 { margin:0; font-size:16px; font-weight:700; letter-spacing:-.01em; }
+    h1 {
+      margin:0;
+      font-size:18px;
+      line-height:1.2;
+      font-weight:750;
+      letter-spacing:-.02em;
+    }
+    h2 {
+      margin:0;
+      font-size:15px;
+      line-height:1.3;
+      font-weight:720;
+      letter-spacing:-.01em;
+    }
     p { margin:0; }
     .muted { color:var(--muted); }
-    .main-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr); gap:18px; margin-top:18px; }
-    @media (max-width: 980px) {
-      .wrap { padding:14px; }
-      .main-grid { grid-template-columns:1fr; }
+    .subtitle { margin-top:2px; color:#64748B; font-size:13px; }
+    .grid {
+      display:grid;
+      grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);
+      gap:16px;
+      margin-top:16px;
+    }
+    @media (max-width: 960px) {
+      .wrap { padding:12px; }
+      .grid { grid-template-columns:1fr; }
     }
     .card {
       overflow:hidden;
       border:1px solid var(--border);
-      border-radius:14px;
-      background:white;
+      border-radius:12px;
+      background:var(--panel);
       box-shadow:0 1px 3px rgba(15,23,42,.05);
     }
     .card-head {
-      padding:18px 20px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:14px 16px;
       border-bottom:1px solid var(--border);
-      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      background:#fff;
     }
-    .card-body { padding:18px 20px 20px; }
-    .stack { display:grid; gap:14px; }
+    .card-body { padding:16px; }
+    .stack { display:grid; gap:13px; }
     label {
-      display:block; margin-bottom:8px;
-      font-size:12px; font-weight:700;
-      text-transform:uppercase; letter-spacing:.04em;
+      display:block;
+      margin-bottom:7px;
       color:#526984;
+      font-size:11px;
+      font-weight:750;
+      letter-spacing:.05em;
+      text-transform:uppercase;
     }
-    select, .file-box {
+    select,
+    .file-box {
       width:100%;
+      min-height:42px;
       border:1px solid var(--border);
       border-radius:10px;
-      background:white;
-      padding:11px 12px;
+      background:#fff;
       color:var(--text);
       outline:none;
     }
-    select:focus, .file-box:focus-within { border-color:var(--primary); box-shadow:0 0 0 3px rgba(37,99,235,.08); }
-    .file-box { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:46px; }
+    select {
+      padding:9px 11px;
+      font-size:14px;
+    }
+    .file-box {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:7px 8px 7px 11px;
+    }
+    select:focus,
+    .file-box:focus-within {
+      border-color:var(--primary);
+      box-shadow:0 0 0 3px rgba(37,99,235,.08);
+    }
     .hidden-input { display:none; }
-    .btns { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+    .btns {
+      display:flex;
+      flex-wrap:wrap;
+      gap:9px;
+      margin-top:15px;
+    }
     button {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:38px;
       border:1px solid var(--border);
       border-radius:10px;
-      background:white;
+      background:#fff;
       color:#334155;
-      padding:10px 13px;
+      padding:8px 12px;
+      font-size:14px;
       font-weight:650;
       cursor:pointer;
-      transition:background .15s, border-color .15s, color .15s, transform .15s;
+      transition:background .15s, border-color .15s, color .15s;
     }
-    button:hover { background:#F8FAFC; }
-    button.primary { background:var(--primary); border-color:var(--primary); color:white; }
-    button.primary:hover { background:var(--primary-dark); }
-    button:disabled { opacity:.55; cursor:not-allowed; transform:none; }
-    .status { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    button:hover { background:#F8FAFC; color:#0F172A; }
+    button.primary {
+      border-color:var(--primary);
+      background:var(--primary);
+      color:#fff;
+    }
+    button.primary:hover { background:var(--primary-hover); border-color:var(--primary-hover); color:#fff; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .status {
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:10px;
+    }
     @media (max-width: 520px) { .status { grid-template-columns:1fr; } }
     .pill {
+      min-height:66px;
       border:1px solid var(--border);
-      border-radius:12px;
-      background:#F8FAFC;
-      padding:12px;
-      min-height:76px;
+      border-radius:11px;
+      background:var(--soft);
+      padding:11px;
     }
-    .pill b { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#64748B; }
-    .pill span { display:block; margin-top:7px; font-size:16px; font-weight:800; }
-    .ok { color:var(--success); }
-    .bad { color:var(--danger); }
-    .warn { color:var(--warning); }
-    .selected-list {
+    .pill b {
+      display:block;
+      color:#64748B;
+      font-size:11px;
+      font-weight:750;
+      letter-spacing:.05em;
+      text-transform:uppercase;
+    }
+    .pill span {
+      display:block;
+      margin-top:5px;
+      font-size:14px;
+      font-weight:760;
+      color:#0F172A;
+    }
+    .pill span.ok { color:var(--success); }
+    .pill span.bad { color:var(--danger); }
+    .pill span.warn { color:var(--warning); }
+    .notice {
+      display:none;
       margin-top:10px;
+      border:1px solid #FCD34D;
+      border-radius:10px;
+      background:#FFFBEB;
+      color:#92400E;
+      padding:10px 11px;
+      font-size:13px;
+      line-height:1.55;
+    }
+    .hint {
+      margin-top:7px;
+      color:#64748B;
+      font-size:12px;
+      line-height:1.5;
+    }
+    .selected-list {
       display:grid;
-      gap:8px;
+      gap:7px;
       max-height:170px;
+      margin-top:9px;
       overflow:auto;
     }
     .file-chip {
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
       border:1px solid var(--border);
       border-radius:10px;
-      background:#F8FAFC;
-      padding:9px 10px;
+      background:var(--soft);
+      padding:8px 10px;
       color:#334155;
     }
     .file-chip strong {
@@ -533,47 +654,105 @@ function dashboardHtml() {
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
+      font-size:13px;
       font-weight:650;
     }
-    .file-chip small { color:#64748B; white-space:nowrap; }
-    .progress {
-      margin-top:16px;
-      border:1px solid #BFDBFE;
-      border-radius:12px;
-      background:#EFF6FF;
-      padding:14px;
-      display:none;
+    .file-chip small {
+      flex-shrink:0;
+      color:#64748B;
+      font-size:12px;
+      white-space:nowrap;
     }
-    .bar { height:8px; border-radius:999px; background:white; overflow:hidden; margin-top:10px; }
-    .bar > div { height:100%; width:0%; background:var(--primary); transition:width .25s ease; }
+    .progress {
+      display:none;
+      margin-top:15px;
+      border:1px solid #BFDBFE;
+      border-radius:11px;
+      background:#EFF6FF;
+      padding:12px;
+    }
+    .progress-head {
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .progress-title {
+      min-width:0;
+      font-size:13px;
+      font-weight:730;
+      color:#172554;
+    }
+    .progress-sub {
+      margin-top:2px;
+      overflow:hidden;
+      color:#1D4ED8;
+      font-size:12px;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .percent {
+      flex-shrink:0;
+      color:#1E40AF;
+      font-size:12px;
+      font-weight:760;
+    }
+    .bar {
+      height:7px;
+      margin-top:9px;
+      overflow:hidden;
+      border-radius:999px;
+      background:#fff;
+    }
+    .bar > div {
+      width:0%;
+      height:100%;
+      border-radius:999px;
+      background:var(--primary);
+      transition:width .22s ease;
+    }
     .log {
-      margin-top:16px;
-      border-radius:12px;
+      min-height:130px;
+      max-height:280px;
+      margin-top:15px;
+      overflow:auto;
+      border-radius:11px;
       background:#0F172A;
       color:#E2E8F0;
-      padding:14px;
+      padding:12px;
       font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size:12px;
-      line-height:1.55;
-      min-height:150px;
-      max-height:300px;
-      overflow:auto;
+      line-height:1.5;
       white-space:pre-wrap;
     }
-    .history { display:grid; gap:10px; }
-    .hist-item { border:1px solid var(--border); border-radius:12px; padding:12px; background:white; }
-    .hist-item b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
-    .hist-item small { color:#64748B; }
-    code { border-radius:6px; background:#F1F5F9; padding:2px 5px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
-    .notice {
-      display:none;
-      margin-top:12px;
-      border-radius:12px;
-      border:1px solid #FCD34D;
-      background:#FFFBEB;
-      color:#92400E;
-      padding:12px;
-      line-height:1.6;
+    .history {
+      display:grid;
+      gap:8px;
+    }
+    .hist-item {
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:#fff;
+      padding:10px;
+    }
+    .hist-item b {
+      display:block;
+      overflow:hidden;
+      color:#0F172A;
+      font-size:13px;
+      font-weight:700;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .hist-item small {
+      color:#64748B;
+      font-size:12px;
+    }
+    code {
+      border-radius:5px;
+      background:#F1F5F9;
+      padding:1px 5px;
+      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size:12px;
     }
   </style>
 </head>
@@ -583,18 +762,18 @@ function dashboardHtml() {
       <div class="logo">TC</div>
       <div>
         <h1>TeleCloud Local Agent</h1>
-        <p class="muted">Upload besar dari komputer lokal, sync metadata ke TeleCloud Online.</p>
+        <p class="subtitle">Upload besar dari komputer lokal, sync metadata ke TeleCloud Online.</p>
       </div>
     </div>
   </header>
 
   <main class="wrap">
-    <div class="main-grid">
+    <div class="grid">
       <section class="card">
         <div class="card-head">
           <div>
             <h2>Upload via Local Agent</h2>
-            <p class="muted">Original dikirim langsung dari komputer ke Telegram.</p>
+            <p class="subtitle">Original dikirim langsung dari komputer ke Telegram.</p>
           </div>
           <button id="refreshFolders">Refresh folders</button>
         </div>
@@ -625,15 +804,15 @@ function dashboardHtml() {
           </div>
 
           <div id="progress" class="progress">
-            <div style="display:flex;justify-content:space-between;gap:12px">
-              <div style="min-width:0">
-                <strong id="stage">Preparing...</strong>
-                <p id="subStage" class="muted" style="margin-top:2px;font-size:12px"></p>
+            <div class="progress-head">
+              <div class="progress-title">
+                <div id="stage">Preparing...</div>
+                <div id="subStage" class="progress-sub"></div>
               </div>
-              <span id="pct" style="font-weight:750;color:#1E40AF">0%</span>
+              <span id="pct" class="percent">0%</span>
             </div>
             <div class="bar"><div id="bar"></div></div>
-            <p class="muted" style="margin-top:10px;font-size:12px">Jangan tutup halaman sampai proses selesai.</p>
+            <p class="hint">Jangan tutup halaman sampai proses selesai.</p>
           </div>
 
           <div id="log" class="log">Ready.</div>
@@ -652,7 +831,7 @@ function dashboardHtml() {
       </aside>
     </div>
 
-    <section class="card" style="margin-top:18px">
+    <section class="card" style="margin-top:16px">
       <div class="card-head">
         <h2>Recent uploads</h2>
         <button id="refreshHistory">Refresh history</button>
@@ -709,7 +888,7 @@ async function loadStatus() {
   }).join('');
 
   if (!data.online_auth_ok) {
-    showNotice('authNotice', 'Online auth gagal: ' + (data.online_auth_error || 'Unauthorized') + '. Pastikan LOCAL_AGENT_TOKEN di .env.agent sama persis dengan secret Cloudflare, lalu redeploy online.');
+    showNotice('authNotice', 'Online auth gagal: ' + (data.online_auth_error || 'Unauthorized') + '. Token lokal: ' + (data.local_agent_token_hint || '-') + '. Pastikan token Cloudflare sama persis, tanpa tanda kutip, lalu redeploy online.');
   } else {
     showNotice('authNotice', '');
   }
@@ -730,7 +909,7 @@ async function loadFolders() {
   } catch (err) {
     $('folder').innerHTML = '<option value="">Root</option>';
     const message = err && err.message ? err.message : String(err);
-    showNotice('folderNotice', 'Folder online gagal dimuat: ' + message + '. Cek LOCAL_AGENT_TOKEN dan redeploy online.');
+    showNotice('folderNotice', 'Folder online gagal dimuat: ' + message);
     log('Folders error: ' + message);
   }
 }
@@ -752,7 +931,7 @@ function renderSelectedFiles() {
 
   const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
   $('fileSummary').textContent = selectedFiles.length + ' file dipilih · ' + formatBytes(total);
-  $('selectedFiles').innerHTML = selectedFiles.map((file, index) => (
+  $('selectedFiles').innerHTML = selectedFiles.map((file) => (
     '<div class="file-chip"><strong title="' + escapeHtml(file.name) + '">' + escapeHtml(file.name) + '</strong><small>' + formatBytes(file.size) + '</small></div>'
   )).join('');
 }

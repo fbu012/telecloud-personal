@@ -262,15 +262,30 @@ export function isConfiguredChatId(value: string | null | undefined): boolean {
 }
 
 export function requireLocalAgentAuth(env: Env, request: Request): Response | null {
-  if (!env.LOCAL_AGENT_TOKEN) {
+  const expectedToken = normalizeLocalAgentToken(env.LOCAL_AGENT_TOKEN);
+  if (!expectedToken) {
     return errorJson('LOCAL_AGENT_TOKEN belum dikonfigurasi di Cloudflare Environment Variables.', 500);
   }
 
   const header = request.headers.get('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : request.headers.get('x-local-agent-token') || '';
-  if (!token || token !== env.LOCAL_AGENT_TOKEN) {
-    return errorJson('Local agent token tidak valid.', 401);
+  const bearerToken = header.toLowerCase().startsWith('bearer ') ? header.slice('Bearer '.length) : '';
+  const headerToken = request.headers.get('x-local-agent-token') || '';
+  const queryToken = new URL(request.url).searchParams.get('agent_token') || '';
+  const candidates = [bearerToken, headerToken, queryToken].map(normalizeLocalAgentToken).filter(Boolean);
+
+  if (!candidates.some((token) => token === expectedToken)) {
+    return errorJson('Local agent token tidak valid. Pastikan LOCAL_AGENT_TOKEN di .env.agent sama persis dengan Cloudflare Secret, lalu redeploy online.', 401);
   }
 
   return null;
+}
+
+function normalizeLocalAgentToken(value: string | null | undefined): string {
+  let token = String(value || '').trim();
+
+  if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+    token = token.slice(1, -1).trim();
+  }
+
+  return token;
 }

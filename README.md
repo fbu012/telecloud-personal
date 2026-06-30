@@ -240,3 +240,8 @@ Online Auth
 ```
 
 Jika gagal, berarti `LOCAL_AGENT_TOKEN` di `.env.agent` tidak sama dengan secret Cloudflare, atau online belum redeploy setelah secret dibuat.
+
+
+## Local Agent auth fix
+
+Local Agent auth sekarang menormalisasi token dan mengirim token lewat header serta query fallback. Jika `Online Auth` masih `Missing`, isi ulang `LOCAL_AGENT_TOKEN` di Cloudflare Secret tanpa tanda kutip, redeploy online, lalu restart local agent.
