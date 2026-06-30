@@ -245,3 +245,15 @@ Jika gagal, berarti `LOCAL_AGENT_TOKEN` di `.env.agent` tidak sama dengan secret
 ## Local Agent auth fix
 
 Local Agent auth sekarang menormalisasi token dan mengirim token lewat header serta query fallback. Jika `Online Auth` masih `Missing`, isi ulang `LOCAL_AGENT_TOKEN` di Cloudflare Secret tanpa tanda kutip, redeploy online, lalu restart local agent.
+
+
+## Local Agent token audit
+
+Dashboard Local Agent sekarang punya status `Token match`. Jika `Online Auth` masih `Missing`, lihat fingerprint:
+
+```txt
+Local fingerprint
+Cloud fingerprint
+```
+
+Kalau berbeda, berarti secret Cloudflare production yang aktif belum sama dengan `.env.agent`, atau belum redeploy setelah update secret.

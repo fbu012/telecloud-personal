@@ -328,3 +328,47 @@ LOCAL_AGENT_TOKEN=tc_agent_random_panjang_123
 ```
 
 Setelah itu redeploy online dan restart local agent.
+
+
+## Update: token audit fingerprint
+
+Patch ini menambahkan endpoint audit:
+
+```txt
+/api/local-agent/audit
+```
+
+Dashboard Local Agent sekarang menampilkan:
+
+```txt
+Online auth
+Token match
+Local fingerprint
+Cloud fingerprint
+```
+
+Cara membacanya:
+
+```txt
+Local fingerprint sama dengan Cloud fingerprint
+→ token yang dibaca local agent sama dengan secret online.
+
+Local fingerprint beda dengan Cloud fingerprint
+→ Cloudflare Secret yang aktif berbeda, salah environment, atau belum redeploy production.
+```
+
+Fingerprint ini bukan token asli. Ini hanya penanda pendek untuk audit.
+
+Jika masih mismatch:
+
+```powershell
+# set ulang secret production
+npx wrangler pages secret put LOCAL_AGENT_TOKEN --project-name=telecloud-personal
+
+# redeploy production
+npm run build
+npx wrangler pages deploy dist --project-name=telecloud-personal --branch=main
+
+# restart local agent
+npm run agent
+```

@@ -1025,3 +1025,16 @@ Salah:
 LOCAL_AGENT_TOKEN=tc_agent_random_panjang_123
 "tc_agent_random_panjang_123"
 ```
+
+
+### Local Agent Token Match
+
+Di dashboard Local Agent, status `Token match` harus hijau.
+
+Jika merah:
+
+```txt
+Local fingerprint != Cloud fingerprint
+```
+
+maka isi ulang `LOCAL_AGENT_TOKEN` di Cloudflare, redeploy production, lalu restart agent lokal.

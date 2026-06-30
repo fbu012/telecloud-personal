@@ -45,7 +45,9 @@ const server = http.createServer(async (req, res) => {
         online_configured: Boolean(TELECLOUD_BASE_URL && LOCAL_AGENT_TOKEN),
         online_auth_ok: onlineCheck.ok,
         online_auth_error: onlineCheck.error,
+        online_auth_audit: onlineCheck.audit || null,
         local_agent_token_hint: tokenHint(LOCAL_AGENT_TOKEN),
+        local_agent_token_fingerprint: localFingerprint(LOCAL_AGENT_TOKEN),
         bot_token_configured: Boolean(BOT_TOKEN),
         original_channel_configured: Boolean(ORIGINAL_CHAT_ID),
         preview_channel_configured: Boolean(PREVIEW_CHAT_ID),
@@ -291,18 +293,49 @@ function postMultipart(urlString, form) {
 
 async function checkOnlineAuth() {
   if (!TELECLOUD_BASE_URL || !LOCAL_AGENT_TOKEN) {
-    return { ok: false, error: 'TELECLOUD_BASE_URL / LOCAL_AGENT_TOKEN belum lengkap' };
+    return { ok: false, error: 'TELECLOUD_BASE_URL / LOCAL_AGENT_TOKEN belum lengkap', audit: null };
+  }
+
+  const audit = await callOnlineAudit().catch((err) => ({
+    ok: false,
+    error: err instanceof Error ? err.message : 'Audit endpoint failed',
+    matched: false,
+  }));
+
+  if (audit && audit.ok === true && audit.matched === false) {
+    return {
+      ok: false,
+      error: 'Token mismatch',
+      audit,
+    };
   }
 
   try {
     await callOnlineJson('/api/local-agent/ping');
-    return { ok: true, error: null };
+    return { ok: true, error: null, audit };
   } catch (err) {
     return {
       ok: false,
       error: err instanceof Error ? err.message : 'Online auth failed',
+      audit,
     };
   }
+}
+
+async function callOnlineAudit() {
+  if (!TELECLOUD_BASE_URL) throw new Error('TELECLOUD_BASE_URL belum dikonfigurasi');
+  const response = await fetch(`${TELECLOUD_BASE_URL}/api/local-agent/audit?agent_token=${encodeURIComponent(LOCAL_AGENT_TOKEN)}`, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${LOCAL_AGENT_TOKEN}`,
+      'x-local-agent-token': LOCAL_AGENT_TOKEN,
+    },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.ok === false) {
+    throw new Error(data?.error || `Online audit error (${response.status})`);
+  }
+  return data;
 }
 
 async function callOnlineJson(pathname, options = {}) {
@@ -381,6 +414,19 @@ function summarizeTelegramUpload(upload) {
     message_id: upload.message_id,
     size_bytes: upload.size_bytes,
   };
+}
+
+function localFingerprint(token) {
+  const normalized = String(token || '').trim();
+  if (!normalized) return 'empty';
+
+  let hash = 2166136261;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function tokenHint(token) {
@@ -874,9 +920,12 @@ function showNotice(id, message) {
 
 async function loadStatus() {
   const data = await fetch('/api/status').then(r => r.json());
+  const audit = data.online_auth_audit || null;
+  const tokenMatch = audit && typeof audit.matched === 'boolean' ? audit.matched : data.online_auth_ok;
   const entries = [
     ['Online config', data.online_configured, true],
     ['Online auth', data.online_auth_ok, true],
+    ['Token match', tokenMatch, true],
     ['Bot token', data.bot_token_configured, true],
     ['Original channel', data.original_channel_configured, true],
     ['Preview channel', data.preview_channel_configured, true],
@@ -888,7 +937,12 @@ async function loadStatus() {
   }).join('');
 
   if (!data.online_auth_ok) {
-    showNotice('authNotice', 'Online auth gagal: ' + (data.online_auth_error || 'Unauthorized') + '. Token lokal: ' + (data.local_agent_token_hint || '-') + '. Pastikan token Cloudflare sama persis, tanpa tanda kutip, lalu redeploy online.');
+    const received = audit?.received;
+    const expected = audit?.expected;
+    const detail = audit
+      ? ' Local fingerprint: ' + (received?.fingerprint || data.local_agent_token_fingerprint || '-') + ' (' + (received?.length ?? '-') + ' chars). Cloud fingerprint: ' + (expected?.fingerprint || '-') + ' (' + (expected?.length ?? '-') + ' chars).'
+      : ' Token lokal: ' + (data.local_agent_token_hint || '-') + '.';
+    showNotice('authNotice', 'Online auth gagal: ' + (data.online_auth_error || 'Unauthorized') + '.' + detail + ' Jika fingerprint/length beda, Cloudflare Secret yang aktif masih berbeda atau belum redeploy production.');
   } else {
     showNotice('authNotice', '');
   }
