@@ -31,6 +31,7 @@ import {
   Music,
   MoreVertical,
   RefreshCcw,
+  RotateCcw,
   Search,
   Settings as SettingsIcon,
   ShieldCheck,
@@ -44,10 +45,12 @@ import {
 import {
   ApiError,
   bulkFileAction,
+  cleanupOldTrash,
   createShareLink,
   createFolder,
   deleteFile,
   deleteFolder,
+  emptyTrash,
   getDownloadUrl,
   getPublicDownloadUrl,
   getPublicShare,
@@ -57,9 +60,12 @@ import {
   getSettings,
   listFiles,
   listFolders,
+  listTrash,
   listShareLinks,
   login,
   logout,
+  permanentlyDeleteTrashFiles,
+  restoreTrashFiles,
   revokeShareLink,
   saveTelegramChannels,
   testTelegramChannels,
@@ -100,6 +106,7 @@ const navItems: NavItem[] = [
   { key: 'photos', label: 'Media', icon: Image, hint: 'Images and videos' },
   { key: 'uploads', label: 'Upload Queue', icon: UploadCloud, hint: 'Bulk upload status' },
   { key: 'favorites', label: 'Starred', icon: Star, hint: 'Pinned files' },
+  { key: 'trash', label: 'Trash', icon: Trash2, hint: 'Deleted files' },
   { key: 'settings', label: 'Settings', icon: SettingsIcon, hint: 'Runtime config' },
 ];
 
@@ -215,6 +222,7 @@ function LoginScreen({ appName, onLoggedIn }: { appName: string; onLoggedIn: () 
 function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => void }) {
   const [view, setView] = useState<ViewMode>('drive');
   const [files, setFiles] = useState<StoredFile[]>([]);
+  const [trashFiles, setTrashFiles] = useState<StoredFile[]>([]);
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -248,6 +256,21 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
   const refresh = useCallback(async () => {
     setLoadingFiles(true);
     try {
+      if (view === 'trash') {
+        const [trashResult, remoteFolders, remoteSettings] = await Promise.all([
+          listTrash(),
+          listFolders().catch(() => []),
+          getSettings().catch(() => null),
+        ]);
+        setTrashFiles(trashResult.files);
+        setFolders(remoteFolders);
+        if (remoteSettings) setSettings(remoteSettings);
+        if (trashResult.auto_deleted_count > 0) {
+          setNotice(`${trashResult.auto_deleted_count} old trash file(s) permanently deleted automatically.`);
+        }
+        return;
+      }
+
       const useFolderFilter = view === 'drive';
       const [remoteFiles, remoteFolders, remoteSettings] = await Promise.all([
         listFiles({ q: searchQuery, type: typeFilter, favorite: view === 'favorites', folder_id: currentFolderId, useFolderFilter, folder_token: currentFolderToken }),
@@ -577,6 +600,41 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     }
   }
 
+  async function restoreFromTrash(file: StoredFile) {
+    try {
+      const result = await restoreTrashFiles([file.id]);
+      setTrashFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setNotice(`${result.count} file restored`);
+      await refresh();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal restore file');
+    }
+  }
+
+  async function permanentlyDeleteFromTrash(file: StoredFile) {
+    if (!window.confirm(`Hapus permanen "${file.original_name}"? Metadata D1 dan message Telegram original/preview/thumbnail akan dicoba dihapus.`)) return;
+    try {
+      const result = await permanentlyDeleteTrashFiles([file.id]);
+      setTrashFiles((prev) => prev.filter((item) => item.id !== file.id));
+      setNotice(`Permanent delete: ${result.count} file, Telegram deleted ${result.telegram_deleted}, failed ${result.telegram_failed}`);
+      await refresh();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal hapus permanen');
+    }
+  }
+
+  async function emptyTrashNow() {
+    if (!trashFiles.length) return;
+    if (!window.confirm(`Hapus permanen ${trashFiles.length} file di Trash? Ini akan menghapus metadata D1 dan mencoba menghapus message Telegram.`)) return;
+    try {
+      const result = await emptyTrash();
+      setNotice(`Trash emptied: ${result.count} file, Telegram deleted ${result.telegram_deleted}, failed ${result.telegram_failed}`);
+      await refresh();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal empty trash');
+    }
+  }
+
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
     if (event.target.files?.length) addFiles(event.target.files, view === 'drive' ? currentFolderId : null);
     event.target.value = '';
@@ -609,7 +667,7 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
     setBulkTargetFolderId(view === 'drive' ? currentFolderId || '' : '');
   }, [view, currentFolderId]);
 
-  const title = view === 'drive' ? 'My Files' : view === 'photos' ? 'Media' : view === 'favorites' ? 'Starred' : view === 'uploads' ? 'Upload Queue' : 'Settings';
+  const title = view === 'drive' ? 'My Files' : view === 'photos' ? 'Media' : view === 'favorites' ? 'Starred' : view === 'trash' ? 'Trash' : view === 'uploads' ? 'Upload Queue' : 'Settings';
 
   return (
     <div className="min-h-screen bg-[#F6F8FB] pb-16 text-slate-950 lg:pb-0">
@@ -652,6 +710,17 @@ function Dashboard({ appName, onLogout }: { appName: string; onLogout: () => voi
               />
             ) : view === 'settings' ? (
               <SettingsView settings={settings} onSaved={(updated) => setSettings((prev) => ({ ...(prev || updated), ...updated }))} onLogout={doLogout} />
+            ) : view === 'trash' ? (
+              <TrashView
+                files={trashFiles}
+                folders={folders}
+                loading={loadingFiles}
+                retentionDays={settings?.trash_auto_delete_days || 0}
+                onRefresh={refresh}
+                onRestore={restoreFromTrash}
+                onPermanentDelete={permanentlyDeleteFromTrash}
+                onEmptyTrash={emptyTrashNow}
+              />
             ) : view === 'drive' ? (
               <CorporateDriveView
                 files={visibleFiles}
@@ -970,6 +1039,135 @@ function Toolbar({
           <option value="grid">Grid</option>
         </select>
       </label>
+    </div>
+  );
+}
+
+
+function TrashView({
+  files,
+  folders,
+  loading,
+  retentionDays,
+  onRefresh,
+  onRestore,
+  onPermanentDelete,
+  onEmptyTrash,
+}: {
+  files: StoredFile[];
+  folders: FolderItem[];
+  loading: boolean;
+  retentionDays: number;
+  onRefresh: () => void;
+  onRestore: (file: StoredFile) => void;
+  onPermanentDelete: (file: StoredFile) => void;
+  onEmptyTrash: () => void;
+}) {
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [localMessage, setLocalMessage] = useState('');
+  const totalSize = files.reduce((sum, file) => sum + file.size_bytes + (file.preview_size_bytes || 0) + (file.thumbnail_size_bytes || 0), 0);
+
+  async function runCleanupOld() {
+    if (!retentionDays) return;
+    setCleanupBusy(true);
+    setLocalMessage('');
+    try {
+      const result = await cleanupOldTrash(retentionDays);
+      setLocalMessage(`Cleanup complete: ${result.count} file permanently deleted, Telegram deleted ${result.telegram_deleted}, failed ${result.telegram_failed}.`);
+      await onRefresh();
+    } catch (err) {
+      setLocalMessage(err instanceof Error ? err.message : 'Gagal cleanup trash lama');
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
+  function folderLabel(folderId?: string | null) {
+    if (!folderId) return 'Root';
+    return folders.find((folder) => folder.id === folderId)?.name || 'Unknown folder';
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">Trash</h2>
+          <p className="text-sm text-slate-500">
+            {files.length} file(s) · approx {formatBytes(totalSize)} metadata/storage references.
+            {retentionDays > 0 ? ` Auto-delete older than ${retentionDays} days is enabled.` : ' Auto-delete is disabled.'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {retentionDays > 0 && (
+            <button onClick={runCleanupOld} disabled={cleanupBusy} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              {cleanupBusy ? 'Cleaning...' : `Clean older than ${retentionDays}d`}
+            </button>
+          )}
+          <button onClick={onRefresh} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Refresh</button>
+          <button onClick={onEmptyTrash} disabled={!files.length} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">Empty trash</button>
+        </div>
+      </div>
+
+      {localMessage && <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">{localMessage}</div>}
+
+      <div className="p-4">
+        {loading ? (
+          <LoadingState />
+        ) : !files.length ? (
+          <div className="flex min-h-[260px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+            <Trash2 className="h-10 w-10 text-slate-400" />
+            <h3 className="mt-3 font-semibold text-slate-950">Trash is empty</h3>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Deleted files will appear here before permanent deletion.</p>
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-border">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Name</th>
+                    <th className="hidden px-4 py-3 font-semibold md:table-cell">Folder</th>
+                    <th className="hidden px-4 py-3 font-semibold md:table-cell">Size</th>
+                    <th className="hidden px-4 py-3 font-semibold xl:table-cell">Deleted</th>
+                    <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border bg-white">
+                  {files.map((file) => {
+                    const Icon = iconForMime(file.mime_type);
+                    return (
+                      <tr key={file.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><Icon className="h-5 w-5" /></span>
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-slate-950">{file.original_name}</p>
+                              <p className="text-xs text-slate-500">{typeLabel(file.mime_type)}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{folderLabel(file.folder_id)}</td>
+                        <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{formatBytes(file.size_bytes)}</td>
+                        <td className="hidden px-4 py-3 text-slate-500 xl:table-cell">{formatDate(file.deleted_at || file.updated_at)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => onRestore(file)} className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                              <RotateCcw className="h-3.5 w-3.5" /> Restore
+                            </button>
+                            <button onClick={() => onPermanentDelete(file)} className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">
+                              <Trash2 className="h-3.5 w-3.5" /> Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2015,6 +2213,7 @@ function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | nu
   const [originalChatId, setOriginalChatId] = useState(settings?.telegram_original_chat_id || '');
   const [previewChatId, setPreviewChatId] = useState(settings?.telegram_preview_chat_id || '');
   const [thumbnailChatId, setThumbnailChatId] = useState(settings?.telegram_thumbnail_chat_id || '');
+  const [trashRetentionDays, setTrashRetentionDays] = useState(settings?.trash_auto_delete_days || 0);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState('');
@@ -2024,7 +2223,8 @@ function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | nu
     setOriginalChatId(settings?.telegram_original_chat_id || '');
     setPreviewChatId(settings?.telegram_preview_chat_id || '');
     setThumbnailChatId(settings?.telegram_thumbnail_chat_id || '');
-  }, [settings?.telegram_original_chat_id, settings?.telegram_preview_chat_id, settings?.telegram_thumbnail_chat_id]);
+    setTrashRetentionDays(settings?.trash_auto_delete_days || 0);
+  }, [settings?.telegram_original_chat_id, settings?.telegram_preview_chat_id, settings?.telegram_thumbnail_chat_id, settings?.trash_auto_delete_days]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -2035,6 +2235,7 @@ function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | nu
         telegram_original_chat_id: originalChatId,
         telegram_preview_chat_id: previewChatId,
         telegram_thumbnail_chat_id: thumbnailChatId,
+        trash_auto_delete_days: trashRetentionDays,
       });
       onSaved(updated);
       setMessage('Telegram channel settings saved.');
@@ -2119,6 +2320,20 @@ function SettingsView({ settings, onSaved, onLogout }: { settings: Settings | nu
               ))}
             </div>
           )}
+
+          <div className="mt-5 rounded-lg border border-border bg-white p-3">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Trash auto-delete</label>
+            <select value={trashRetentionDays} onChange={(event) => setTrashRetentionDays(Number(event.target.value))} className="mt-2 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-primary">
+              <option value={0}>Disabled - manual delete only</option>
+              <option value={7}>Delete permanently after 7 days</option>
+              <option value={14}>Delete permanently after 14 days</option>
+              <option value={30}>Delete permanently after 30 days</option>
+              <option value={60}>Delete permanently after 60 days</option>
+              <option value={90}>Delete permanently after 90 days</option>
+              <option value={180}>Delete permanently after 180 days</option>
+            </select>
+            <p className="mt-2 text-xs leading-5 text-slate-500">Auto-delete runs when the Trash API is opened/refreshed. Use a Cloudflare Cron later if you need guaranteed deletion without app activity.</p>
+          </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="submit" disabled={saving} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[#1e40af] disabled:opacity-50">{saving ? 'Saving...' : 'Save channel settings'}</button>
@@ -2246,14 +2461,14 @@ function Meta({ label, value }: { label: string; value: string }) {
 function MobileBottomNav({ view, setView }: { view: ViewMode; setView: (view: ViewMode) => void }) {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white lg:hidden">
-      <div className="grid grid-cols-5">
+      <div className="grid grid-cols-6">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = view === item.key;
           return (
             <button key={item.key} onClick={() => setView(item.key)} className={cx('flex flex-col items-center gap-1 px-1 py-2 text-[11px]', active ? 'text-primary' : 'text-slate-500')}>
               <Icon className="h-5 w-5" />
-              <span className="truncate">{item.key === 'drive' ? 'Files' : item.key === 'photos' ? 'Media' : item.key === 'uploads' ? 'Uploads' : item.key === 'favorites' ? 'Starred' : 'Settings'}</span>
+              <span className="truncate">{item.key === 'drive' ? 'Files' : item.key === 'photos' ? 'Media' : item.key === 'uploads' ? 'Uploads' : item.key === 'favorites' ? 'Starred' : item.key === 'trash' ? 'Trash' : 'Settings'}</span>
             </button>
           );
         })}

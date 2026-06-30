@@ -46,6 +46,56 @@ export async function getSettings(): Promise<Settings> {
   return data;
 }
 
+export async function listTrash(): Promise<{ files: StoredFile[]; auto_deleted_count: number; telegram_failed_count: number; trash_auto_delete_days: number }> {
+  const response = await fetch('/api/trash', { credentials: 'include' });
+  const data = await parseJson<{ ok: true; files: StoredFile[]; auto_deleted_count: number; telegram_failed_count: number; trash_auto_delete_days: number }>(response);
+  return data;
+}
+
+export async function restoreTrashFiles(ids: string[]): Promise<{ count: number }> {
+  const response = await fetch('/api/trash', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'restore', ids }),
+  });
+  const data = await parseJson<{ ok: true; count: number }>(response);
+  return data;
+}
+
+export async function permanentlyDeleteTrashFiles(ids: string[]): Promise<{ count: number; telegram_deleted: number; telegram_failed: number }> {
+  const response = await fetch('/api/trash', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'delete_permanently', ids }),
+  });
+  const data = await parseJson<{ ok: true; count: number; telegram_deleted: number; telegram_failed: number }>(response);
+  return data;
+}
+
+export async function emptyTrash(): Promise<{ count: number; telegram_deleted: number; telegram_failed: number; limit: number }> {
+  const response = await fetch('/api/trash', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'empty' }),
+  });
+  const data = await parseJson<{ ok: true; count: number; telegram_deleted: number; telegram_failed: number; limit: number }>(response);
+  return data;
+}
+
+export async function cleanupOldTrash(days: number): Promise<{ count: number; telegram_deleted: number; telegram_failed: number; days: number }> {
+  const response = await fetch('/api/trash', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'cleanup_old', days }),
+  });
+  const data = await parseJson<{ ok: true; count: number; telegram_deleted: number; telegram_failed: number; days: number }>(response);
+  return data;
+}
+
 export async function listFiles(params: { q?: string; type?: string; favorite?: boolean; folder_id?: string | null; useFolderFilter?: boolean; folder_token?: string | null } = {}): Promise<StoredFile[]> {
   const url = new URL('/api/files', window.location.origin);
   if (params.q) url.searchParams.set('q', params.q);
@@ -256,9 +306,10 @@ export function getPublicDownloadUrl(token: string, fileId?: string, inline = fa
 }
 
 export async function saveTelegramChannels(channels: {
-  telegram_original_chat_id: string;
-  telegram_preview_chat_id: string;
-  telegram_thumbnail_chat_id: string;
+  telegram_original_chat_id?: string;
+  telegram_preview_chat_id?: string;
+  telegram_thumbnail_chat_id?: string;
+  trash_auto_delete_days?: number;
 }): Promise<Settings> {
   const response = await fetch('/api/settings', {
     method: 'PATCH',

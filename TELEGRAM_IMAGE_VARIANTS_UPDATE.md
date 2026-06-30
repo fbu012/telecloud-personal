@@ -152,3 +152,18 @@ If image upload only stores original:
 - Try JPEG/PNG/WebP.
 - Existing old files will not automatically get variants.
 ```
+
+
+## Trash integration
+
+Jika image yang punya original/preview/thumbnail dipindahkan ke Trash, ketiga message Telegram tetap ada sampai user menjalankan permanent delete.
+
+Permanent delete dari menu Trash akan mencoba menghapus:
+
+```txt
+Original Telegram message
+Preview Telegram message
+Thumbnail Telegram message
+```
+
+Bot harus menjadi admin channel dan punya izin delete messages.

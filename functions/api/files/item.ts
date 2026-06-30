@@ -102,18 +102,11 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
   if (locked) return locked;
 
   if (hard) {
-    if (env.DELETE_TELEGRAM_ON_HARD_DELETE === 'true' && env.BOT_TOKEN) {
-      const telegramUrl = `${getTelegramApiBase(env)}/bot${env.BOT_TOKEN}/deleteMessage`;
-      await fetch(telegramUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: file.telegram_chat_id, message_id: file.telegram_message_id }),
-      }).catch(() => undefined);
-    }
+    const telegramResult = env.DELETE_TELEGRAM_ON_HARD_DELETE === 'true' ? await deleteTelegramMessagesForFile(env, file) : { deleted: 0, failed: 0 };
 
     await env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run();
-    await logEvent(env, 'file_hard_deleted', 'File hard deleted', { id, original_name: file.original_name });
-    return json({ ok: true, hard_deleted: true });
+    await logEvent(env, 'file_hard_deleted', 'File hard deleted', { id, original_name: file.original_name, telegram: telegramResult });
+    return json({ ok: true, hard_deleted: true, telegram: telegramResult });
   }
 
   const deletedAt = nowIso();
@@ -124,6 +117,44 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 
   return json({ ok: true, trashed: true });
 };
+
+
+async function deleteTelegramMessagesForFile(env: Env, file: FileRow) {
+  if (!env.BOT_TOKEN) return { deleted: 0, failed: 0 };
+  const seen = new Set<string>();
+  const targets: Array<{ chat_id: string; message_id: number }> = [];
+
+  function add(chatId: string | null | undefined, messageId: number | null | undefined) {
+    if (!chatId || !messageId) return;
+    const key = `${chatId}:${messageId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    targets.push({ chat_id: chatId, message_id: messageId });
+  }
+
+  add(file.telegram_chat_id, file.telegram_message_id);
+  add(file.preview_telegram_chat_id, file.preview_telegram_message_id);
+  add(file.thumbnail_telegram_chat_id, file.thumbnail_telegram_message_id);
+
+  let deleted = 0;
+  let failed = 0;
+  for (const target of targets) {
+    try {
+      const response = await fetch(`${getTelegramApiBase(env)}/bot${env.BOT_TOKEN}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(target),
+      });
+      const data = (await response.json().catch(() => null)) as { ok?: boolean } | null;
+      if (response.ok && data?.ok) deleted += 1;
+      else failed += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  return { deleted, failed };
+}
 
 function normalizeFile(file: FileRow) {
   return {

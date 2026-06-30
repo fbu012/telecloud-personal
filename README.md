@@ -24,6 +24,7 @@ Stack awal:
 - Settings page untuk melihat storage mode, batas file, dan mengatur 3 channel Telegram image variants
 - Dokumentasi migrasi ke Local Bot API Server
 - Image variants: thumbnail untuk list/grid, optimized preview untuk lightbox, original untuk download
+- Trash menu dengan restore, permanent delete, empty trash, dan auto-delete retention
 
 ## Batas awal
 
@@ -131,3 +132,29 @@ Ringkasnya:
 - Untuk bulk upload, frontend mengirim **1 file = 1 request**.
 - Untuk mode awal, file besar akan ditolak sebelum dikirim ke Telegram.
 - File lama tidak perlu dipindah saat nanti migrasi ke Local Bot API Server; database sudah menyimpan `chat_id`, `message_id`, `file_id`, dan metadata utama.
+
+
+## Trash behavior
+
+Delete biasa hanya memindahkan file ke Trash:
+
+```txt
+D1 status = trash
+Telegram message masih ada
+```
+
+Dari menu Trash, user bisa:
+
+```txt
+Restore
+Delete permanently
+Empty trash
+```
+
+Permanent delete akan menghapus metadata D1 dan mencoba menghapus message Telegram original/preview/thumbnail. Trash auto-delete bisa diatur dari Settings.
+
+Lihat juga:
+
+```txt
+TRASH_MANAGEMENT_UPDATE.md
+```

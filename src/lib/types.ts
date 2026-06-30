@@ -1,4 +1,4 @@
-export type ViewMode = 'photos' | 'drive' | 'uploads' | 'favorites' | 'settings';
+export type ViewMode = 'photos' | 'drive' | 'uploads' | 'favorites' | 'trash' | 'settings';
 
 export interface FolderItem {
   id: string;
@@ -71,6 +71,7 @@ export interface Settings {
   telegram_preview_chat_id_configured?: boolean;
   telegram_thumbnail_chat_id_configured?: boolean;
   bot_token_configured: boolean;
+  trash_auto_delete_days?: number;
   migration_ready: boolean;
 }
 
